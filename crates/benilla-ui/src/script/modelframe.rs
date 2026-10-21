@@ -776,6 +776,16 @@ impl crate::script::UiScript {
         m.frame_rect(h)
     }
 
+    /// survivor: whether the frame the global `name` names is on screen (shown, and every parent
+    /// with it).
+    pub fn named_frame_visible(&self, name: &str) -> bool {
+        let m = self.model_ref();
+        m.arena
+            .lookup(name)
+            .and_then(|h| m.arena.frame(h))
+            .is_some_and(|f| f.effective_visible)
+    }
+
     /// The character state of the pane `h`, for tests and instruments.
     pub fn character_pane(&self, h: FrameHandle) -> Option<crate::widget::CharacterPane> {
         match self.model_ref().arena.frame(h).map(|f| &f.kind_state) {

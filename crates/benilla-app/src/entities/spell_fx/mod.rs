@@ -471,6 +471,21 @@ struct FxInstance {
     decaying: bool,
 }
 
+/// survivor: an effect root playing at a game mode's rate ([`crate::SURVIVOR_FX_RATES`]).
+#[derive(Component)]
+pub(crate) struct SurvivorFxRate(f32);
+
+/// survivor: hold every animation of a sped-up effect at its rate.
+pub(crate) fn apply_survivor_fx_rate(mut roots: Query<(&SurvivorFxRate, &mut AnimationPlayer)>) {
+    for (rate, mut player) in &mut roots {
+        for (_, active) in player.playing_animations_mut() {
+            if active.speed() != rate.0 {
+                active.set_speed(rate.0);
+            }
+        }
+    }
+}
+
 /// A unit's effect instances (the client's per-unit `+0xb4` effect list).
 #[derive(Component, Default)]
 pub(super) struct FxAttached {
@@ -859,12 +874,17 @@ pub(super) fn attach_spell_fx(
                 None, // an attach-point kit effect opens on its model's own `Stand`
             );
             inst.root = Some(root);
+            // survivor: a game mode may play this effect faster.
+            let rate = crate::survivor_fx_rate(&inst.path);
+            if rate != 1.0 {
+                commands.entity(root).insert(SurvivorFxRate(rate));
+            }
             if !inst.persistent {
                 // One pass of sequence 0, from the raw sequence table: a sequence with no bone
                 // keys builds no clip (the eat/drink tankard). A looping one counts as one pass;
                 // the reference's loop boundary is untraced, but its tankard ends with the drink.
                 let span = dm.first_seq_span.unwrap_or(FALLBACK_SPAN);
-                inst.expires = Some(now + span);
+                inst.expires = Some(now + span / rate); // survivor: `/ rate`
             }
             if benilla_assets::trace::enabled() {
                 benilla_assets::trace::line(

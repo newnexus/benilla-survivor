@@ -215,6 +215,22 @@ pub use survivor_frames::SurvivorFrames; // survivor
 pub static SURVIVOR_LEVEL_RISES_ONLY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// survivor: spell-kit effects a game mode plays faster, `(part of the model path, lowercase;
+/// rate)`: the model's animation runs `rate` times faster and the one-shot ends that much sooner.
+pub static SURVIVOR_FX_RATES: std::sync::Mutex<Vec<(String, f32)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// survivor: the rate [`SURVIVOR_FX_RATES`] names for `path`, else 1.
+pub(crate) fn survivor_fx_rate(path: &str) -> f32 {
+    let path = path.to_ascii_lowercase();
+    SURVIVOR_FX_RATES
+        .lock()
+        .ok()
+        .and_then(|r| r.iter().find(|(k, _)| path.contains(k.as_str())).map(|e| e.1))
+        .filter(|&r| r > 0.0)
+        .unwrap_or(1.0)
+}
+
 /// Builds and runs the client app. `build` is the launcher's compile-time git stamp, passed in as
 /// data so the sha lives in the shim's fingerprint and a commit does not recompile this crate.
 pub fn run(build: BuildId) -> AppExit {

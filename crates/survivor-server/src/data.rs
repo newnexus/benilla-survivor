@@ -122,6 +122,11 @@ pub(crate) struct SpellInfo {
 /// `FactionTemplate.dbc` 14, "Monster": hostile to every player.
 const FACTION_MONSTER: u32 = 14;
 
+/// A survivor's quests want many more kills than 1.12's: this many times, up to what the quest
+/// log's 6-bit counter can show.
+const QUEST_KILLS_TIMES: u32 = 10;
+const QUEST_KILLS_MAX: u32 = 60;
+
 /// `UNIT_NPC_FLAG_QUESTGIVER`.
 pub(crate) const NPC_QUESTGIVER: u32 = 0x2;
 
@@ -307,6 +312,15 @@ impl WorldData {
         }
         for r in rows(&dir, "quests.tsv") {
             let text = |i: usize| r.get(i).cloned().unwrap_or_default();
+            // The objective sentence names 1.12's counts: it names the survivor's instead.
+            let mut objectives = text(10);
+            for k in 0..4 {
+                let (_, count): (u32, u32) = pair(r.get(13 + k));
+                if count > 0 {
+                    let more = (count * QUEST_KILLS_TIMES).min(QUEST_KILLS_MAX);
+                    objectives = objectives.replace(&format!(" {count} "), &format!(" {more} "));
+                }
+            }
             d.quests.push(Quest {
                 id: num(r.first()),
                 level: num(r.get(1)),
@@ -318,10 +332,13 @@ impl WorldData {
                 money: num(r.get(7)),
                 title: text(8),
                 details: text(9),
-                objectives: text(10),
+                objectives,
                 offer_text: text(11),
                 end_text: text(12),
-                kills: std::array::from_fn(|k| pair(r.get(13 + k))),
+                kills: std::array::from_fn(|k| {
+                    let (entry, count): (u32, u32) = pair(r.get(13 + k));
+                    (entry, (count * QUEST_KILLS_TIMES).min(QUEST_KILLS_MAX))
+                }),
                 objective_texts: std::array::from_fn(|k| text(17 + k)),
             });
         }

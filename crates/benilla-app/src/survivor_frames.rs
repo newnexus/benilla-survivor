@@ -12,6 +12,8 @@ use benilla_ui::script::UiScript;
 pub struct SurvivorFrames {
     pub watch: Vec<String>,
     pub rects: std::collections::HashMap<String, Rect>,
+    /// The watched frames on screen now.
+    pub shown: std::collections::HashSet<String>,
     pub run: Vec<String>,
 }
 
@@ -52,4 +54,11 @@ fn locate(
         })
         .collect();
     frames.rects = rects;
+    let shown = frames
+        .watch
+        .iter()
+        .filter(|name| script.named_frame_visible(name))
+        .cloned()
+        .collect();
+    frames.shown = shown;
 }

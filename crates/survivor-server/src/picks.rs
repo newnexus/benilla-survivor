@@ -13,6 +13,11 @@ pub struct Card {
     pub replaces: Option<u32>,
     /// A defensive skill; otherwise a damage one.
     pub defensive: bool,
+    /// 0 common, 1 uncommon, 2 rare, 3 epic, 4 legendary: the card's colour.
+    pub rarity: u8,
+    /// An upgrade to the skill `spell`, already known, in lines ("+22% damage"); empty for a
+    /// card that teaches.
+    pub boost: Vec<String>,
 }
 
 /// The cards for one level gained.
@@ -27,7 +32,7 @@ pub struct Offer {
 
 struct Board {
     offer: Option<Offer>,
-    choice: Option<(u64, u32)>,
+    choice: Option<(u64, usize)>,
     next_id: u64,
 }
 
@@ -46,9 +51,9 @@ pub fn offer() -> Option<Offer> {
     board().offer.clone()
 }
 
-/// The player took `spell` from offer `id`.
-pub fn choose(id: u64, spell: u32) {
-    board().choice = Some((id, spell));
+/// The player took card `index` of offer `id`.
+pub fn choose(id: u64, index: usize) {
+    board().choice = Some((id, index));
 }
 
 /// Show `cards` for `level`; the offer's id comes back.
@@ -62,7 +67,7 @@ pub(crate) fn post(level: u32, cards: Vec<Card>) -> u64 {
 }
 
 /// The screen's answer, once.
-pub(crate) fn take_choice() -> Option<(u64, u32)> {
+pub(crate) fn take_choice() -> Option<(u64, usize)> {
     board().choice.take()
 }
 

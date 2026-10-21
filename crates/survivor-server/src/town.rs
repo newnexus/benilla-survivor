@@ -29,7 +29,7 @@ pub const TOWNS: &[Town] = &[
         radius: 55.0,
         ground: 96.0,
         // The road between the church and Executor Arren, facing the church.
-        arrive: [1846.0, 1606.0, 99.0],
+        arrive: [1844.5, 1606.0, 99.0],
         arrive_facing: 1.6,
         // The road from the crypt (where Deathguard Oliver's patrol turns), and the road out to
         // the rest of Tirisfall past Deathguard Phillip's.
@@ -56,6 +56,21 @@ pub fn in_town() -> bool {
 
 pub(crate) fn set_in_town(on: bool) {
     IN_TOWN.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// When the run about to start begins, while the player stands outside a barrier counting down.
+static COUNTDOWN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Seconds until the run starts, while counting down.
+pub fn countdown() -> Option<f32> {
+    let at = (*COUNTDOWN.lock().ok()?)?;
+    Some(at.saturating_duration_since(std::time::Instant::now()).as_secs_f32())
+}
+
+pub(crate) fn set_countdown(at: Option<std::time::Instant>) {
+    if let Ok(mut c) = COUNTDOWN.lock() {
+        *c = at;
+    }
 }
 
 /// The town nearest `pos`, by index.

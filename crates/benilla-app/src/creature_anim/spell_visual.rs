@@ -1223,6 +1223,12 @@ pub(super) fn arm_level_up_fx(
         if !e.unit_field(benilla_protocol::field::FIELD_UNIT_LEVEL) {
             continue;
         }
+        // survivor: a reset to a lower level is no ding when the game mode says so.
+        if e.new < e.old
+            && crate::SURVIVOR_LEVEL_RISES_ONLY.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            continue;
+        }
         let Some((effect, path)) = visuals
             .as_ref()
             .and_then(|v| v.0.hardcoded_effect(LEVEL_UP_EFFECT))

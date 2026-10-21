@@ -702,7 +702,11 @@ impl Plugin for EntitiesPlugin {
                 spell_fx::tick_fx_tint,
                 // Event keyframes and completion callbacks, after attach so a just-spawned
                 // instance's first window `[0, cur]` fires this frame.
-                (spell_fx::fire_fx_anim_events, spell_fx::advance_fx_anim),
+                (
+                    spell_fx::fire_fx_anim_events,
+                    spell_fx::advance_fx_anim,
+                    spell_fx::apply_survivor_fx_rate, // survivor
+                ),
                 // A gear change re-dresses the standing visual in place, every attachment left
                 // alone as in the reference; a new corpse arms its Dead or Drowned pose.
                 (attach::redress_player_looks, corpse::pose_corpses),

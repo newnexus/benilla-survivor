@@ -22,6 +22,8 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use survivor_server::picks::{self, Card, Offer};
 
 mod barrier;
+mod countdown;
+mod quest_frame;
 mod haven;
 mod queue;
 mod settings;
@@ -34,10 +36,14 @@ impl Plugin for SurvivorUiPlugin {
         settings::seed();
         // A run starting or ending resets the level: only a rise is a level-up.
         benilla_app::SURVIVOR_LEVEL_RISES_ONLY.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut rates) = benilla_app::SURVIVOR_FX_RATES.lock() {
+            rates.push(("levelup".to_owned(), DING_RATE));
+        }
         app.init_resource::<Screen>()
             .add_systems(Update, (show_offer, take_card, hover_cards).chain())
             .add_systems(Update, follow_aim)
-            .add_plugins((queue::plugin, barrier::plugin, haven::plugin));
+            .add_systems(Update, preload_library)
+            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin));
     }
 }
 
@@ -53,9 +59,10 @@ fn follow_aim(mut last: Local<Option<u64>>, mut select: MessageWriter<benilla_ap
     }
 }
 
-/// Seconds the level-up flash (`Spells\LevelUp\LevelUp.mdx`, a 1.87 s clip) plays before the
-/// cards come up.
-const DING_HOLD: f32 = 1.9;
+/// The level-up flash (`Spells\LevelUp\LevelUp.mdx`, a 1.87 s clip) plays this many times
+/// faster, and the cards come up as it ends.
+const DING_RATE: f32 = 2.5;
+const DING_HOLD: f32 = 0.8;
 
 /// When the offer on its way first appeared, and when the last one closed.
 #[derive(Default)]
@@ -74,6 +81,33 @@ const NEW_GREEN: Color = Color::srgb(0.35, 1.0, 0.35);
 const UPGRADE_BLUE: Color = Color::srgb(0.45, 0.75, 1.0);
 const TEXT: Color = Color::srgb(0.93, 0.89, 0.78);
 const MUTED: Color = Color::srgb(0.6, 0.6, 0.6);
+/// The rarities' colours, WoW's item quality colours: common, uncommon, rare, epic, legendary.
+const RARITY: [Color; 5] = [
+    Color::srgb(0.85, 0.85, 0.85),
+    Color::srgb(0.12, 1.0, 0.0),
+    Color::srgb(0.0, 0.44, 0.87),
+    Color::srgb(0.64, 0.21, 0.93),
+    Color::srgb(1.0, 0.5, 0.0),
+];
+const RARITY_NAMES: [&str; 5] = ["COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY"];
+
+/// The card's colour for its rarity.
+fn rarity_color(rarity: u8) -> Color {
+    RARITY[usize::from(rarity.min(4))]
+}
+
+/// A card's background: the dark card tinted toward its rarity, the more for a rarer one.
+fn card_bg(rarity: u8, lit: bool) -> Color {
+    let base = if lit { CARD_BG_HOVER } else { CARD_BG }.to_srgba();
+    let tint = rarity_color(rarity).to_srgba();
+    let k = [0.0, 0.08, 0.12, 0.16, 0.2][usize::from(rarity.min(4))];
+    Color::srgba(
+        base.red + (tint.red - base.red) * k,
+        base.green + (tint.green - base.green) * k,
+        base.blue + (tint.blue - base.blue) * k,
+        base.alpha,
+    )
+}
 
 /// What the screen is showing, and the data it draws from, read once on the first level-up.
 #[derive(Resource, Default)]
@@ -91,9 +125,9 @@ struct Screen {
 #[derive(Component)]
 struct CardButton {
     offer: u64,
-    spell: u32,
-    /// Its place on screen, 0-2: the key that takes it.
+    /// Its place on screen, 0-2: the key that takes it, and what the server is told.
     index: usize,
+    rarity: u8,
 }
 
 #[derive(Component)]
@@ -238,6 +272,25 @@ fn rank_number(spell: &SpellDisplay) -> Option<u32> {
     spell.rank.as_deref()?.strip_prefix("Rank ")?.trim().parse().ok()
 }
 
+/// Read the cards' game data (spells, icons, the font) once the player is in the world, so the
+/// first level-up's cards come up without the wait.
+fn preload_library(
+    objects: benilla_app::Objects,
+    mut screen: ResMut<Screen>,
+    mut fonts: ResMut<Assets<Font>>,
+) {
+    if screen.library.is_some() || screen.broken || objects.player().is_none() {
+        return;
+    }
+    match Library::load(&mut fonts) {
+        Ok(l) => screen.library = Some(Mutex::new(l)),
+        Err(e) => {
+            error!("survivor-ui: the level-up screen cannot read the game data: {e:#}");
+            screen.broken = true;
+        }
+    }
+}
+
 /// Put the server's offer on screen, or take it off when there is none.
 fn show_offer(
     mut commands: Commands,
@@ -365,7 +418,12 @@ fn spawn_card(
     let font = &library.font;
     let spell = library.spells.get(card.spell);
     let name = spell.map_or_else(|| format!("Spell {}", card.spell), |s| s.name.clone());
+    let edge = if card.rarity == 0 { CARD_EDGE } else { rarity_color(card.rarity) };
     let (tag, tag_color) = match (card.replaces, spell.and_then(rank_number)) {
+        _ if !card.boost.is_empty() => (
+            format!("{} UPGRADE", RARITY_NAMES[usize::from(card.rarity.min(4))]),
+            rarity_color(card.rarity),
+        ),
         (Some(_), Some(rank)) => (format!("UPGRADE  Rank {} > {}", rank - 1, rank), UPGRADE_BLUE),
         (Some(_), None) => ("UPGRADE".to_owned(), UPGRADE_BLUE),
         (None, _) => ("NEW!".to_owned(), NEW_GREEN),
@@ -376,8 +434,8 @@ fn spawn_card(
     row.spawn((
         CardButton {
             offer,
-            spell: card.spell,
             index,
+            rarity: card.rarity,
         },
         Button,
         Node {
@@ -394,8 +452,8 @@ fn spawn_card(
             border_radius: BorderRadius::all(Val::Vh(1.4)),
             ..default()
         },
-        BackgroundColor(CARD_BG),
-        BorderColor::all(CARD_EDGE),
+        BackgroundColor(card_bg(card.rarity, false)),
+        BorderColor::all(edge),
     ))
     .with_children(|c| {
         c.spawn(Node {
@@ -405,7 +463,7 @@ fn spawn_card(
             border: UiRect::all(Val::Vh(0.3)),
             ..default()
         })
-        .insert(BorderColor::all(CARD_EDGE))
+        .insert(BorderColor::all(edge))
         .with_children(|frame| {
             if let Some(icon) = icon {
                 frame.spawn((
@@ -418,8 +476,13 @@ fn spawn_card(
                 ));
             }
         });
-        c.spawn(text(font, name, 4.0 * vh, Color::WHITE));
+        let name_color = if card.rarity == 0 { Color::WHITE } else { rarity_color(card.rarity) };
+        c.spawn(text(font, name, 4.0 * vh, name_color));
         c.spawn(text(font, tag, 2.5 * vh, tag_color));
+        // An upgrade's lines, big, in its colour: what the card does.
+        for line in &card.boost {
+            c.spawn(text(font, line.clone(), 3.0 * vh, rarity_color(card.rarity)));
+        }
         c.spawn(text(font, kind, 2.2 * vh, MUTED));
         c.spawn((
             Node {
@@ -463,10 +526,10 @@ fn take_card(
         .find(|(card, interaction)| {
             **interaction == Interaction::Pressed || pressed_key == Some(card.index)
         })
-        .map(|(card, _)| (card.offer, card.spell));
-    if let Some((offer, spell)) = picked {
-        info!("survivor-ui: took spell {spell} from offer {offer}");
-        picks::choose(offer, spell);
+        .map(|(card, _)| (card.offer, card.index));
+    if let Some((offer, index)) = picked {
+        info!("survivor-ui: took card {index} from offer {offer}");
+        picks::choose(offer, index);
         screen.answered = Some(offer);
     }
 }
@@ -474,14 +537,15 @@ fn take_card(
 /// The card under the cursor lights up.
 fn hover_cards(
     mut cards: Query<
-        (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        (With<CardButton>, Changed<Interaction>),
+        (&CardButton, &Interaction, &mut BackgroundColor, &mut BorderColor),
+        Changed<Interaction>,
     >,
 ) {
-    for (interaction, mut bg, mut edge) in &mut cards {
+    for (card, interaction, mut bg, mut edge) in &mut cards {
         let lit = *interaction != Interaction::None;
-        bg.0 = if lit { CARD_BG_HOVER } else { CARD_BG };
-        *edge = BorderColor::all(if lit { GOLD } else { CARD_EDGE });
+        bg.0 = card_bg(card.rarity, lit);
+        let rest = if card.rarity == 0 { CARD_EDGE } else { rarity_color(card.rarity) };
+        *edge = BorderColor::all(if lit { GOLD } else { rest });
     }
 }
 

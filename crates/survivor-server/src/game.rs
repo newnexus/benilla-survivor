@@ -20,6 +20,7 @@ mod quest;
 mod rotation;
 mod spawner;
 mod town;
+mod upgrade;
 pub(crate) use meal::PackItem;
 
 /// Creatures keep this share of their 1.12 health.
@@ -289,6 +290,10 @@ pub(crate) struct Game {
     walked: bool,
     /// The run's spawner, while out of town.
     waves: Option<spawner::Waves>,
+    /// Outside the barrier, counting down to the run.
+    countdown: Option<Instant>,
+    /// The run's upgrade cards taken, by skill.
+    upgrades: upgrade::Upgrades,
     /// The test switches' state is in (`$SURVIVOR_QUESTS`), done on the first tick.
     seeded: bool,
     /// The world entry, which the client's movement clock counts from.
@@ -411,6 +416,8 @@ impl Game {
             teleport_counter: 0,
             seeded: false,
             waves: None,
+            countdown: None,
+            upgrades: upgrade::Upgrades::default(),
             walked: false,
             started: now,
             player: Player {
@@ -509,6 +516,7 @@ impl Game {
         self.check_barrier(now);
         self.update_visibility(now);
         self.walk_beats(now);
+        self.guard_posts(now);
         self.update_npcs(now);
         self.talk_nearby(now);
         self.tick_waves(now);
@@ -696,6 +704,29 @@ impl Game {
         self.values(guid, fl);
         if health == 0 {
             self.kill(target, now);
+        }
+    }
+
+    /// A creature dies at someone else's hand (a guard's): it falls where it stands, and the
+    /// player gets nothing for it.
+    fn slain(&mut self, i: usize, now: Instant) {
+        let m = &mut self.mobs[i];
+        m.state = MobState::Dead {
+            despawn: now + CORPSE_TIME,
+            respawn: now + m.respawn,
+        };
+        let here = m.here(now);
+        let was_moving = m.path.take().is_some();
+        m.pos = here;
+        let guid = m.guid;
+        eprintln!("survivor: a guard cut down {}", self.data.creatures[&m.entry].name);
+        if was_moving {
+            let id = self.spline_id();
+            self.send(opcode::SMSG_MONSTER_MOVE, &packets::monster_stop(guid, here, id));
+        }
+        self.send(opcode::SMSG_ATTACKSTOP, &packets::attack_stop(guid, self.player.guid));
+        if self.player.target == Some(guid) {
+            self.player.target = None;
         }
     }
 
@@ -942,7 +973,7 @@ impl Game {
         {
             return Some(fail::NOT_READY);
         }
-        if s.power_type == self.player.power.kind && self.player.power.current < s.cost {
+        if s.power_type == self.player.power.kind && self.player.power.current < self.cost_of(s) {
             return Some(fail::NO_POWER);
         }
         // In town nothing is fought: no spell at a creature, none around the caster.
@@ -990,16 +1021,17 @@ impl Game {
         let Some(s) = self.spell(spell).cloned() else { return };
         let target = if Self::needs_target(&s) { target } else { None };
         self.player.gcd_until = now + GCD;
+        let cast_ms = self.cast_ms_of(&s);
         self.send(
             opcode::SMSG_SPELL_START,
-            &packets::spell_start(self.player.guid, spell, s.cast_ms, target),
+            &packets::spell_start(self.player.guid, spell, cast_ms, target),
         );
         self.rotate(spell);
-        if s.cast_ms > 0 {
+        if cast_ms > 0 {
             self.player.casting = Some(Casting {
                 spell,
                 target,
-                done: now + Duration::from_millis(u64::from(s.cast_ms)),
+                done: now + Duration::from_millis(u64::from(cast_ms)),
             });
         } else {
             self.finish_cast(spell, target, now);
@@ -1025,9 +1057,11 @@ impl Game {
             return;
         }
         if s.power_type == self.player.power.kind {
-            self.player.power.current = self.player.power.current.saturating_sub(s.cost);
+            let cost = self.cost_of(&s);
+            self.player.power.current = self.player.power.current.saturating_sub(cost);
             self.send_power();
         }
+        let mods = self.mods(spell);
         let rest = self.survivor_cooldown(spell);
         if !rest.is_zero() {
             self.player.cooldowns.insert(spell, now + rest);
@@ -1047,7 +1081,20 @@ impl Game {
                 })
                 .collect()
         } else {
-            target.and_then(|g| self.mob_index(g)).into_iter().collect()
+            let mut hits: Vec<usize> = target.and_then(|g| self.mob_index(g)).into_iter().collect();
+            // Upgrades: more enemies near the target, or (legendary) every one round it.
+            if let Some(&first) = hits.first() {
+                let at = self.mobs[first].here(now);
+                let mut near: Vec<(usize, f32)> = (0..self.mobs.len())
+                    .filter(|&i| i != first && self.mobs[i].alive() && self.visible.contains(&i))
+                    .map(|i| (i, dist2d(self.mobs[i].here(now), at)))
+                    .collect();
+                near.sort_by(|a, b| a.1.total_cmp(&b.1));
+                let reach = if mods.legendary { upgrade::LEGENDARY_SPLASH } else { AOE_RADIUS };
+                let extra = if mods.legendary { usize::MAX } else { mods.targets as usize };
+                hits.extend(near.into_iter().filter(|n| n.1 <= reach).take(extra).map(|n| n.0));
+            }
+            hits
         };
         let hit_guids: Vec<u64> = if hits.is_empty() {
             vec![self.player.guid]
@@ -1070,6 +1117,7 @@ impl Game {
             self.apply_buff(spell, now);
         }
         let bonus = (self.player.level - 1) as f32 * SPELL_DAMAGE_PER_LEVEL;
+        let more = mods.damage;
         for e in 0..3 {
             let (effect, base, die) = (s.effects[e], s.base_points[e], s.die_sides[e]);
             let roll = |rng: &mut Rng| {
@@ -1080,7 +1128,7 @@ impl Game {
                 // School damage.
                 2 => {
                     for &i in &hits {
-                        let d = roll(&mut self.rng) + bonus;
+                        let d = (roll(&mut self.rng) + bonus) * more;
                         self.deliver(i, &s, d, now);
                     }
                 }
@@ -1089,11 +1137,12 @@ impl Game {
                     let (lo, hi, _) = self.player.weapon;
                     for &i in &hits {
                         let w = self.rng.range(lo, hi) + bonus;
-                        let d = if effect == 31 {
-                            w * (base + 1) as f32 / 100.0
-                        } else {
-                            w + (base + 1) as f32
-                        };
+                        let d = more
+                            * if effect == 31 {
+                                w * (base + 1) as f32 / 100.0
+                            } else {
+                                w + (base + 1) as f32
+                            };
                         self.deliver(i, &s, d, now);
                     }
                 }
@@ -1113,13 +1162,13 @@ impl Game {
                             every,
                             next: now + every,
                             ticks_left: ticks,
-                            amount: (base + 1).max(1) as u32 + bonus as u32,
+                            amount: (((base + 1).max(1) as f32 + bonus) * more) as u32,
                         });
                     }
                 }
                 // A heal on oneself.
                 10 => {
-                    let h = roll(&mut self.rng) as u32;
+                    let h = (roll(&mut self.rng) * more) as u32;
                     self.player.health = (self.player.health + h).min(self.player.max_health);
                     let mut fl = Fields::default();
                     fl.set(f::HEALTH, self.player.health);

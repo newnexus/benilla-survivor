@@ -24,7 +24,12 @@ const LEAD: u32 = 4;
 pub(crate) struct Pick {
     id: u64,
     paused_at: Instant,
+    /// Each card's upgrade, by its place; none for a card that teaches.
+    boosts: Vec<Option<super::upgrade::Boost>>,
 }
+
+/// Of the cards dealt, about this share are upgrades to known skills.
+const BOOST_SHARE: f32 = 0.5;
 
 impl Game {
     pub(crate) fn paused(&self) -> bool {
@@ -105,6 +110,8 @@ impl Game {
                     spell: c.spell,
                     replaces,
                     defensive: kind == SpellKind::Defensive,
+                    rarity: 0,
+                    boost: Vec::new(),
                 };
                 Some((c.req_level, card))
             })
@@ -125,16 +132,72 @@ impl Game {
         pool
     }
 
+    /// The cards for one level: learning cards and upgrade cards mixed, each upgrade's rarity
+    /// rolled, no skill upgraded twice in one offer.
+    fn deal(&mut self) -> (Vec<Card>, Vec<Option<super::upgrade::Boost>>) {
+        let mut learn = self.roll_offer().into_iter();
+        let (mut cards, mut boosts, mut taken) = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..OFFER {
+            let boost = if self.rng.unit() < BOOST_SHARE {
+                self.roll_boost(&taken)
+            } else {
+                None
+            };
+            let (card, boost) = match boost {
+                Some(b) => {
+                    let card = self.boost_card(&b);
+                    (card, Some(b))
+                }
+                None => match learn.next() {
+                    Some(c) => (c, None),
+                    None => match self.roll_boost(&taken) {
+                        Some(b) => (self.boost_card(&b), Some(b)),
+                        None => break,
+                    },
+                },
+            };
+            if let Some(b) = &boost {
+                taken.push(b.chain);
+            }
+            cards.push(card);
+            boosts.push(boost);
+        }
+        (cards, boosts)
+    }
+
+    /// The card that shows upgrade `b`.
+    fn boost_card(&self, b: &super::upgrade::Boost) -> Card {
+        let spell = self.known_rank(b.chain);
+        Card {
+            spell,
+            replaces: None,
+            defensive: self.kind(spell) == SpellKind::Defensive,
+            rarity: b.rarity,
+            boost: b.lines(),
+        }
+    }
+
     /// The level-up screen's answer, if one came; asked every tick, paused or not.
     pub(super) fn take_pick_choice(&mut self) {
-        let Some((id, spell)) = picks::take_choice() else {
+        let Some((id, index)) = picks::take_choice() else {
             return;
         };
-        let offered = self.pick.as_ref().is_some_and(|p| p.id == id)
-            && picks::offer().is_some_and(|o| o.cards.iter().any(|c| c.spell == spell));
-        if offered {
-            self.choose(spell);
+        if !self.pick.as_ref().is_some_and(|p| p.id == id) {
+            return;
         }
+        let Some(card) = picks::offer().and_then(|o| o.cards.get(index).cloned()) else {
+            return;
+        };
+        let boost = self
+            .pick
+            .as_mut()
+            .and_then(|p| p.boosts.get_mut(index))
+            .and_then(Option::take);
+        match boost {
+            Some(b) => self.apply_boost(&b),
+            None => self.learn(card.spell),
+        }
+        self.next_pick();
     }
 
     /// At the end of a tick: a level gained and no pick open stops the world for one.
@@ -142,14 +205,21 @@ impl Game {
         if self.picks_pending == 0 || self.pick.is_some() || self.player.dead_until.is_some() {
             return;
         }
-        let cards = self.roll_offer();
+        let (cards, boosts) = self.deal();
         if cards.is_empty() {
             self.picks_pending = 0;
             return;
         }
-        eprintln!("survivor: level-up pick offers {:?}", cards.iter().map(|c| c.spell).collect::<Vec<_>>());
+        eprintln!(
+            "survivor: level-up pick offers {:?}",
+            cards.iter().map(|c| (c.spell, c.rarity, c.boost.len())).collect::<Vec<_>>()
+        );
         let id = picks::post(self.player.level, cards);
-        self.pick = Some(Pick { id, paused_at: now });
+        self.pick = Some(Pick {
+            id,
+            paused_at: now,
+            boosts,
+        });
         self.freeze(now);
     }
 
@@ -175,14 +245,16 @@ impl Game {
     }
 
     /// Learn the choice, then the next pick or the world.
-    fn choose(&mut self, spell: u32) {
-        self.learn(spell);
+    /// A card taken: the next pick, or the world.
+    fn next_pick(&mut self) {
         self.picks_pending = self.picks_pending.saturating_sub(1);
         if self.picks_pending > 0 {
-            let cards = self.roll_offer();
+            let (cards, boosts) = self.deal();
             if !cards.is_empty() {
                 let id = picks::post(self.player.level, cards);
-                self.pick.as_mut().expect("paused").id = id;
+                let pick = self.pick.as_mut().expect("paused");
+                pick.id = id;
+                pick.boosts = boosts;
                 return;
             }
             self.picks_pending = 0;
@@ -299,6 +371,7 @@ impl Drop for Game {
         crate::aim::set(None);
         crate::bar::clear();
         crate::town::set_in_town(false);
+        crate::town::set_countdown(None);
         if self.pick.is_some() {
             picks::clear();
         }

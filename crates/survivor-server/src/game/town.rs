@@ -30,6 +30,10 @@ const META_XP: [u32; 29] = [
     16000, 17700, 19400, 21300, 23200, 25200, 27300, 29400, 31700, 34000, 36400, 38900, 41400,
     44300,
 ];
+/// Stepping out through the barrier counts down this long before the run starts; stepping back
+/// in calls it off.
+const COUNTDOWN: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// The meta level's cap, for now.
 const META_MAX: u32 = META_XP.len() as u32 + 1;
 
@@ -57,8 +61,18 @@ fn meta_next(level: u32) -> u32 {
     META_XP.get(level as usize - 1).copied().unwrap_or(0)
 }
 
-/// A guard's walking pace, yards a second (1.12's walk speed).
+/// A guard's walking pace, yards a second (1.12's walk speed), and running.
 const WALK: f32 = 2.5;
+const RUN: f32 = 7.0;
+/// The guard every entrance post is.
+const DEATHGUARD_ELITE: u32 = 7980;
+/// A post guard goes for a creature chasing the player this near its post, gives up past the
+/// leash, swings from this close, this often, for this share of the creature's health.
+const GUARD_SIGHT: f32 = 14.0;
+const GUARD_LEASH: f32 = 20.0;
+const GUARD_REACH: f32 = 3.5;
+const GUARD_SWING: Duration = Duration::from_millis(1600);
+const GUARD_HIT: f32 = 0.34;
 
 /// One of a town's people.
 pub(crate) struct Npc {
@@ -68,15 +82,27 @@ pub(crate) struct Npc {
     pub(crate) pos: [f32; 3],
     facing: f32,
     beat: Option<Walk>,
+    /// An entrance post's guard: it fights what comes too near the barrier.
+    guard: Option<Guard>,
 }
 
 impl Npc {
     pub(crate) fn here(&self, now: Instant) -> [f32; 3] {
-        self.beat
+        let leg = self
+            .beat
             .as_ref()
             .and_then(|w| w.leg)
-            .map_or(self.pos, |leg| leg.at(now))
+            .or_else(|| self.guard.as_ref().and_then(|g| g.leg));
+        leg.map_or(self.pos, |leg| leg.at(now))
     }
+}
+
+/// A post guard's fight: the creature it is after (a creature index), its run, its swing clock.
+struct Guard {
+    post: [f32; 3],
+    target: Option<usize>,
+    leg: Option<Path>,
+    next_swing: Instant,
 }
 
 /// A guard walking a patrol path round and round, `side` yards to its right.
@@ -104,12 +130,19 @@ pub(crate) fn npcs(data: &crate::data::WorldData, now: Instant) -> Vec<Npc> {
                 wait_until: now,
             });
             let pos = walk.as_ref().map_or(s.pos, |w| beside(&w.points, 1, w.side));
+            let guard = (s.entry == DEATHGUARD_ELITE && walk.is_none()).then(|| Guard {
+                post: s.pos,
+                target: None,
+                leg: None,
+                next_swing: now,
+            });
             Npc {
                 guid: 0xF130_0000_0000_0000 | u64::from(s.entry) << 24 | 0x80_0000 | i as u64,
                 entry: s.entry,
                 pos,
                 facing: s.facing,
                 beat: walk,
+                guard,
             }
         })
         .collect()
@@ -147,7 +180,22 @@ impl Game {
             return;
         }
         match (self.mode, town_at(self.player.pos)) {
-            (Mode::Town(_), None) => self.start_run(now),
+            (Mode::Town(_), None) => match self.countdown {
+                None => {
+                    self.countdown = Some(now + COUNTDOWN);
+                    crate::town::set_countdown(self.countdown);
+                }
+                Some(at) if now >= at => {
+                    self.countdown = None;
+                    crate::town::set_countdown(None);
+                    self.start_run(now);
+                }
+                Some(_) => {}
+            },
+            (Mode::Town(_), Some(_)) if self.countdown.is_some() => {
+                self.countdown = None;
+                crate::town::set_countdown(None);
+            }
             (Mode::Run, Some(i)) => self.enter_town(i, false, now),
             _ => {}
         }
@@ -221,6 +269,8 @@ impl Game {
             }
         }
         self.player.spells = self.start_spells.clone();
+        // A run's upgrades go with it.
+        self.upgrades.clear();
         let start = self.start_buttons;
         self.sort_start_bar(&start);
         self.send(opcode::SMSG_ACTION_BUTTONS, &packets::action_buttons(&self.buttons));
@@ -346,6 +396,114 @@ impl Game {
                     opcode::SMSG_MONSTER_MOVE,
                     &packets::monster_walk(guid, from, id, to, duration.as_millis() as u32),
                 );
+            }
+        }
+    }
+
+    /// The post guards: a creature chasing the player near a post is run down and cut down, and
+    /// the guard goes back to its post when it is dead or has got away past the leash. A guard's
+    /// kill gives the player nothing.
+    pub(super) fn guard_posts(&mut self, now: Instant) {
+        for g in 0..self.npcs.len() {
+            let Some(guard) = self.npcs[g].guard.as_ref() else { continue };
+            let post = guard.post;
+            let here = self.npcs[g].here(now);
+            // Keep or drop the target, else look for one.
+            let mut target = guard.target.filter(|&i| {
+                self.mobs.get(i).is_some_and(|m| {
+                    m.alive() && dist2d(m.here(now), post) <= GUARD_LEASH
+                })
+            });
+            if target.is_none() {
+                target = self
+                    .mobs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| m.alive() && m.state == super::MobState::Chasing)
+                    .map(|(i, m)| (i, dist2d(m.here(now), post)))
+                    .filter(|&(_, d)| d <= GUARD_SIGHT)
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(i, _)| i);
+                if let Some(i) = target {
+                    let (guid, mob) = (self.npcs[g].guid, self.mobs[i].guid);
+                    self.send(opcode::SMSG_ATTACKSTART, &packets::attack_start(guid, mob));
+                }
+            }
+            let shown = self.npcs_shown.contains(&g);
+            let n = &mut self.npcs[g];
+            let guard = n.guard.as_mut().expect("checked above");
+            guard.target = target;
+            if guard.leg.is_some_and(|l| l.done(now)) {
+                n.pos = here;
+                guard.leg = None;
+            }
+            // Where to be: at the creature, or back at the post.
+            let (goal, fighting) = match target {
+                Some(i) => (self.mobs[i].here(now), true),
+                None => (post, false),
+            };
+            let reach = if fighting { GUARD_REACH } else { 0.5 };
+            let d = dist2d(here, goal);
+            if d > reach {
+                let aim_off = guard.leg.is_none_or(|l| dist2d(l.to, goal) > 1.5);
+                if aim_off {
+                    let k = if fighting { (d - GUARD_REACH * 0.7) / d } else { 1.0 };
+                    let to = [
+                        here[0] + (goal[0] - here[0]) * k,
+                        here[1] + (goal[1] - here[1]) * k,
+                        goal[2],
+                    ];
+                    let duration = Duration::from_secs_f32((dist2d(here, to) / RUN).max(0.05));
+                    n.pos = here;
+                    guard.leg = Some(Path {
+                        from: here,
+                        to,
+                        start: now,
+                        duration,
+                    });
+                    let guid = n.guid;
+                    if shown {
+                        let id = self.spline_id();
+                        self.send(
+                            opcode::SMSG_MONSTER_MOVE,
+                            &packets::monster_move(guid, here, id, to, duration.as_millis() as u32),
+                        );
+                    }
+                }
+                continue;
+            }
+            // In reach: stand and swing.
+            let stopped = guard.leg.take().is_some();
+            let ready = now >= guard.next_swing;
+            if ready {
+                guard.next_swing = now + GUARD_SWING;
+            }
+            let guid = n.guid;
+            if stopped {
+                n.pos = here;
+                if shown {
+                    let id = self.spline_id();
+                    self.send(opcode::SMSG_MONSTER_MOVE, &packets::monster_stop(guid, here, id));
+                }
+            }
+            let Some(i) = target else { continue };
+            if !ready {
+                continue;
+            }
+            let m = &mut self.mobs[i];
+            let damage = ((m.max_health as f32 * GUARD_HIT).ceil() as u32).max(1);
+            m.health = m.health.saturating_sub(damage);
+            let (mob, health) = (m.guid, m.health);
+            self.send(
+                opcode::SMSG_ATTACKERSTATEUPDATE,
+                &packets::attacker_state(guid, mob, packets::Swing::Hit, damage),
+            );
+            let mut fl = Fields::default();
+            fl.set(f::HEALTH, health);
+            self.values(mob, fl);
+            if health == 0 {
+                self.send(opcode::SMSG_ATTACKSTOP, &packets::attack_stop(guid, mob));
+                self.slain(i, now);
             }
         }
     }
