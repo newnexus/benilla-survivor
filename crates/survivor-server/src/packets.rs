@@ -42,6 +42,8 @@ pub(crate) mod f {
     pub const PLAYER_INV_SLOT_HEAD: u16 = 486;
     pub const PLAYER_PACK_SLOT_1: u16 = 532;
     pub const PLAYER_XP: u16 = 716;
+    /// Byte 2: the extra action bars shown (`GetActionBarToggles`).
+    pub const PLAYER_FIELD_BYTES: u16 = 1222;
     pub const PLAYER_NEXT_LEVEL_XP: u16 = 717;
     pub const PLAYER_MOD_DAMAGE_DONE_PCT: u16 = 1215;
     pub const PLAYER_WATCHED_FACTION_INDEX: u16 = 1261;
@@ -452,6 +454,13 @@ pub(crate) fn action_buttons(buttons: &[u32; 120]) -> Vec<u8> {
     for &w in buttons {
         b.u32(w);
     }
+    b.0
+}
+
+/// `SMSG_SPELL_COOLDOWN`: one spell of `caster`'s resting `ms`.
+pub(crate) fn spell_cooldown(caster: u64, spell: u32, ms: u32) -> Vec<u8> {
+    let mut b = Body::new();
+    b.u64(caster).u32(spell).u32(ms);
     b.0
 }
 

@@ -13,8 +13,10 @@ use crate::packets::{self, f, Fields, Swing, Update};
 use crate::roster::Character;
 use crate::wire::Sender;
 
+mod aura;
 mod meal;
 mod pick;
+mod rotation;
 pub(crate) use meal::PackItem;
 
 /// Creatures keep this share of their 1.12 health.
@@ -178,6 +180,8 @@ pub(crate) struct Player {
     pub(crate) target: Option<u64>,
     next_swing: Instant,
     dead_until: Option<Instant>,
+    /// Buffs from the player's own spells.
+    buffs: Vec<aura::Buff>,
 }
 
 pub(crate) struct Game {
@@ -204,6 +208,8 @@ pub(crate) struct Game {
     pack: Vec<PackItem>,
     /// Food and drink being taken.
     meals: Vec<meal::Meal>,
+    /// What the action bars hold, by role ([`rotation`]).
+    bars: rotation::Bars,
 }
 
 /// `SPELL_FAILED_*` reasons the client words.
@@ -314,7 +320,7 @@ impl Game {
             .filter(|a| a.0 == c.class && a.3 == 0 && data.spells.contains_key(&a.2))
             .map(|a| a.2)
             .collect();
-        Self {
+        let mut game = Self {
             curve,
             out,
             missiles: Vec::new(),
@@ -326,6 +332,7 @@ impl Game {
             root_counter: 0,
             pack,
             meals: Vec::new(),
+            bars: rotation::Bars::default(),
             player: Player {
                 guid: c.guid,
                 class: c.class,
@@ -336,7 +343,8 @@ impl Game {
                     max,
                 },
                 spells,
-                autocast: true,
+                // `$SURVIVOR_AUTOCAST=0` starts with it off, for looking at creatures alive.
+                autocast: std::env::var("SURVIVOR_AUTOCAST").as_deref() != Ok("0"),
                 cooldowns: std::collections::HashMap::new(),
                 gcd_until: now,
                 casting: None,
@@ -351,13 +359,21 @@ impl Game {
                 target: None,
                 next_swing: now,
                 dead_until: None,
+                buffs: Vec::new(),
             },
             data,
             mobs,
             visible: HashSet::new(),
             next_spline: 1,
             rng,
-        }
+        };
+        game.sort_start_bar(&buttons);
+        game
+    }
+
+    /// The action bars as the client is to get them at login.
+    pub(crate) fn buttons(&self) -> &[u32; 120] {
+        &self.buttons
     }
 
     /// XP needed from level 1 to 2, for the player's create.
@@ -409,6 +425,7 @@ impl Game {
         self.player_attack(now);
         self.tick_spells(now);
         self.tick_meals(now);
+        self.tick_buffs(now);
         for i in 0..self.mobs.len() {
             self.mob_ai(i, now);
         }
@@ -868,6 +885,7 @@ impl Game {
             opcode::SMSG_SPELL_START,
             &packets::spell_start(self.player.guid, spell, s.cast_ms, target),
         );
+        self.rotate(spell);
         if s.cast_ms > 0 {
             self.player.casting = Some(Casting {
                 spell,
@@ -901,10 +919,13 @@ impl Game {
             self.player.power.current = self.player.power.current.saturating_sub(s.cost);
             self.send_power();
         }
-        if s.recovery_ms > 0 {
-            self.player
-                .cooldowns
-                .insert(spell, now + Duration::from_millis(u64::from(s.recovery_ms)));
+        let rest = self.survivor_cooldown(spell);
+        if !rest.is_zero() {
+            self.player.cooldowns.insert(spell, now + rest);
+            self.send(
+                opcode::SMSG_SPELL_COOLDOWN,
+                &packets::spell_cooldown(self.player.guid, spell, rest.as_millis() as u32),
+            );
         }
         self.player.in_combat_until = now + Duration::from_secs(5);
         // Who it hits: one target, everything around the caster, or the caster itself.
@@ -936,6 +957,9 @@ impl Game {
             opcode::SMSG_SPELL_GO,
             &packets::spell_go(self.player.guid, spell, &hit_guids, target),
         );
+        if self.is_buff(spell) && s.kind != crate::data::SpellKind::Damage {
+            self.apply_buff(spell, now);
+        }
         let bonus = (self.player.level - 1) as f32 * SPELL_DAMAGE_PER_LEVEL;
         for e in 0..3 {
             let (effect, base, die) = (s.effects[e], s.base_points[e], s.die_sides[e]);
@@ -1091,14 +1115,8 @@ impl Game {
         }
 
         if self.player.autocast && self.player.casting.is_none() && now >= self.player.gcd_until {
-            let target = self.player.target;
-            let pick = self.player.spells.iter().copied().find(|&id| {
-                self.spell(id)
-                    .is_some_and(|s| s.kind == crate::data::SpellKind::Damage)
-                    && self.cast_refusal(id, target, now).is_none()
-            });
-            if let Some(id) = pick {
-                self.cast(id, target);
+            if let Some(id) = self.rotation_pick(now) {
+                self.cast(id, self.player.target);
             }
         }
     }

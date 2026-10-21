@@ -25,6 +25,8 @@ const KEEP_PREFIXES: &[&str] = &[
     "interface\\",
     "fonts\\",
     "character\\scourge\\",
+    // The Scarlet Crusade and other human NPCs (18 MB).
+    "character\\human\\",
     // Sound: the interface, a Forsaken's own voice and body, weapons, the login music. Zone
     // music and ambience come from Tirisfall's own areas ([`zone_sounds`]).
     "sound\\interface\\",
@@ -34,6 +36,12 @@ const KEEP_PREFIXES: &[&str] = &[
     "sound\\character\\playerroars\\",
     "sound\\item\\",
     "sound\\music\\gluescreenmusic\\",
+    // Every spell's effect models and sounds (16 + 47 MB): a level-up pick can teach any class
+    // spell, so no logged run covers them all.
+    "spells\\",
+    "sound\\spells\\",
+    // Death thuds and other shared hits (2 MB).
+    "sound\\effects\\",
 ];
 
 /// `AreaTable.dbc` id of Tirisfall Glades.
@@ -208,14 +216,53 @@ fn creature_models(chain: &Chain, displays: &[u32]) -> Result<Vec<String>> {
     let field = |r: &[u8], i: usize| u32::from_le_bytes(r[i * 4..i * 4 + 4].try_into().expect("4"));
     let (_, cdi, _) = dbc(chain, "DBFilesClient\\CreatureDisplayInfo.dbc")?;
     let (_, cmd, strings) = dbc(chain, "DBFilesClient\\CreatureModelData.dbc")?;
+    // A humanoid NPC's face and clothes come baked into one texture, named by the last field of
+    // its `CreatureDisplayInfoExtra` row (`ExtendedDisplayInfoID`, field 3).
+    let (extra_fields, extra, extra_strings) =
+        dbc(chain, "DBFilesClient\\CreatureDisplayInfoExtra.dbc")?;
+    let string_at = |block: &[u8], off: usize| {
+        let end = block[off..].iter().position(|&b| b == 0).map_or(block.len(), |e| off + e);
+        String::from_utf8_lossy(&block[off..end]).into_owned()
+    };
     let mut out = Vec::new();
     for &d in displays {
         let Some(row) = cdi.iter().find(|r| field(r, 0) == d) else { continue };
+        if let Some(x) = extra.iter().find(|r| field(r, 0) == field(row, 3) && field(row, 3) != 0) {
+            let bake = string_at(&extra_strings, field(x, extra_fields - 1) as usize);
+            if !bake.is_empty() {
+                out.push(format!("Textures\\BakedNpcTextures\\{bake}"));
+            }
+        }
         let model = field(row, 1);
         let Some(m) = cmd.iter().find(|r| field(r, 0) == model) else { continue };
         let off = field(m, 2) as usize;
         let end = strings[off..].iter().position(|&b| b == 0).map_or(strings.len(), |e| off + e);
         out.push(String::from_utf8_lossy(&strings[off..end]).into_owned());
+    }
+    Ok(out)
+}
+
+/// Every sound file the creatures of `displays` play: each `CreatureDisplayInfo` row's
+/// `CreatureSoundData` row (field 2) names its kits (aggro, wounds, death, wing flaps, fidgets),
+/// which live in shared folders as often as in the creature's own. A field that is not a kit
+/// (a delay, an impact type) names a small kit or none, which costs little.
+fn creature_sounds(chain: &mut Chain, displays: &[u32]) -> Result<Vec<String>> {
+    let field = |r: &[u8], i: usize| u32::from_le_bytes(r[i * 4..i * 4 + 4].try_into().expect("4"));
+    let (_, cdi, _) = dbc(chain, "DBFilesClient\\CreatureDisplayInfo.dbc")?;
+    let (fields, csd, _) = dbc(chain, "DBFilesClient\\CreatureSoundData.dbc")?;
+    let kits = benilla_formats::load_sound_kit_catalog(chain)?;
+    let mut out = Vec::new();
+    for &d in displays {
+        let Some(row) = cdi.iter().find(|r| field(r, 0) == d) else { continue };
+        let Some(sound) = csd.iter().find(|r| field(r, 0) == field(row, 2) && field(row, 2) != 0)
+        else {
+            continue;
+        };
+        for i in 1..fields {
+            if let Some(kit) = kits.get(field(sound, i)) {
+                out.extend(kit.files.iter().map(|(path, _)| path.clone()));
+            }
+        }
     }
     Ok(out)
 }
@@ -275,6 +322,11 @@ fn main() -> Result<()> {
         let mut folders = std::collections::BTreeSet::new();
         for model in creature_models(&chain, &displays)? {
             let key = norm(&model);
+            // A baked face is one file: its folder holds every NPC in the game.
+            if key.starts_with("textures\\bakednpctextures\\") {
+                p.keep(&model);
+                continue;
+            }
             if let Some((dir, _)) = key.rsplit_once('\\') {
                 folders.insert(format!("{dir}\\"));
                 if let Some(name) = dir.rsplit('\\').next() {
@@ -288,6 +340,10 @@ fn main() -> Result<()> {
             if folders.iter().any(|f| key.starts_with(f)) {
                 p.keep_asset(&entry.name);
             }
+        }
+        let mut sound_chain = Chain::open(std::path::Path::new(&data))?;
+        for path in creature_sounds(&mut sound_chain, &displays)? {
+            p.keep(&path);
         }
     }
     let mut sound_chain = Chain::open(std::path::Path::new(&data))?;

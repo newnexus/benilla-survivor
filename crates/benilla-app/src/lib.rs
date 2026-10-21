@@ -167,6 +167,7 @@ mod ui_quest_share;
 mod ui_reputation;
 mod ui_saved;
 mod ui_script;
+mod survivor_frames; // survivor
 mod ui_session;
 mod ui_shapeshift;
 mod ui_social;
@@ -207,6 +208,7 @@ pub use net::Objects;
 pub use target::Interact;
 pub use target::SurvivorSelect; // survivor
 pub use player::SurvivorTouch; // survivor
+pub use survivor_frames::SurvivorFrames; // survivor
 
 /// Builds and runs the client app. `build` is the launcher's compile-time git stamp, passed in as
 /// data so the sha lives in the shim's fingerprint and a commit does not recompile this crate.

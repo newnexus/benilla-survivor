@@ -21,14 +21,19 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use survivor_server::picks::{self, Card, Offer};
 
+mod queue;
+mod settings;
+
 /// The level-up screen.
 pub struct SurvivorUiPlugin;
 
 impl Plugin for SurvivorUiPlugin {
     fn build(&self, app: &mut App) {
+        settings::seed();
         app.init_resource::<Screen>()
             .add_systems(Update, (show_offer, take_card, hover_cards).chain())
-            .add_systems(Update, follow_aim);
+            .add_systems(Update, follow_aim)
+            .add_plugins(queue::plugin);
     }
 }
 

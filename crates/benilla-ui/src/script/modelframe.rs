@@ -768,6 +768,14 @@ impl crate::script::UiScript {
         self.model_ref().arena.lookup(name)
     }
 
+    /// survivor: the rect of the frame the global `name` names, in the root's units (768 tall,
+    /// y up), for a crate on top of benilla that draws over a stock frame.
+    pub fn named_frame_rect(&self, name: &str) -> Option<crate::layout::Rect> {
+        let m = self.model_ref();
+        let h = m.arena.lookup(name)?;
+        m.frame_rect(h)
+    }
+
     /// The character state of the pane `h`, for tests and instruments.
     pub fn character_pane(&self, h: FrameHandle) -> Option<crate::widget::CharacterPane> {
         match self.model_ref().arena.frame(h).map(|f| &f.kind_state) {

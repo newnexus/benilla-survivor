@@ -18,12 +18,6 @@ const REGEN_PERIOD_MS: u32 = 5000;
 /// The aura slots the food and drink buffs show in.
 const FOOD_SLOT: u16 = 0;
 const DRINK_SLOT: u16 = 1;
-/// `AFLAG_CANCELABLE | AFLAG_EFF_INDEX_0`: a live, positive aura.
-const AURA_FLAGS: u32 = 0x03;
-/// Unit aura fields (vmangos `UpdateFields_1_12_1.h`).
-const UNIT_FIELD_AURA: u16 = 47;
-const UNIT_FIELD_AURAFLAGS: u16 = 95;
-const UNIT_FIELD_AURALEVELS: u16 = 101;
 /// `INVENTORY_SLOT_BAG_0`: the bag byte of an item in the backpack or worn.
 const BACKPACK_BAG: u8 = 255;
 
@@ -40,18 +34,18 @@ pub(crate) struct PackItem {
 pub(crate) struct Meal {
     /// Mana rather than health.
     drink: bool,
-    spell: u32,
+    pub(super) spell: u32,
     per_second: f32,
     /// The part of a point owed but not yet given.
     carry: f32,
     /// Points actually restored, short of the total when the bar was already full.
     given: u32,
     next: Instant,
-    ends: Instant,
+    pub(super) ends: Instant,
 }
 
 impl Meal {
-    fn slot(&self) -> u16 {
+    pub(super) fn slot(&self) -> u16 {
         if self.drink {
             DRINK_SLOT
         } else {
@@ -103,7 +97,7 @@ impl Game {
             next: now + Duration::from_secs(1),
             ends: now + Duration::from_millis(u64::from(s.duration_ms)),
         });
-        self.send_meal_auras(now);
+        self.send_auras(now);
         self.spend_item(i);
     }
 
@@ -123,31 +117,6 @@ impl Game {
         fl.guid(field, 0);
         self.values(self.player.guid, fl);
         self.send(opcode::SMSG_DESTROY_OBJECT, &packets::destroy(guid));
-    }
-
-    /// The food and drink buffs as they stand: each slot's spell, flags and level, and the time
-    /// left on each.
-    pub(super) fn send_meal_auras(&self, now: Instant) {
-        let mut fl = Fields::default();
-        let mut flags = 0u32;
-        let mut levels = 0u32;
-        for slot in [FOOD_SLOT, DRINK_SLOT] {
-            let meal = self.meals.iter().find(|m| m.slot() == slot);
-            fl.set(UNIT_FIELD_AURA + slot, meal.map_or(0, |m| m.spell));
-            if meal.is_some() {
-                flags |= AURA_FLAGS << (4 * slot);
-                levels |= self.player.level.min(255) << (8 * slot);
-            }
-        }
-        fl.set(UNIT_FIELD_AURAFLAGS, flags)
-            .set(UNIT_FIELD_AURALEVELS, levels);
-        self.values(self.player.guid, fl);
-        for m in &self.meals {
-            let left = m.ends.saturating_duration_since(now).as_millis() as u32;
-            let mut b = crate::wire::Body::new();
-            b.u8(m.slot() as u8).u32(left);
-            self.send(opcode::SMSG_UPDATE_AURA_DURATION, &b.0);
-        }
     }
 
     /// Once a second, each meal gives its share; one past its end comes off the aura row.
@@ -201,7 +170,7 @@ impl Game {
         }
         self.meals.retain(|m| now < m.ends);
         if self.meals.len() != before {
-            self.send_meal_auras(now);
+            self.send_auras(now);
         }
     }
 

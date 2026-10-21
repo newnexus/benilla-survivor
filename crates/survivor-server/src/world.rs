@@ -374,7 +374,7 @@ fn enter_world(out: &Sender, c: &Character, data: &Arc<WorldData>) -> std::io::R
     )?;
     out.send(
         opcode::SMSG_ACTION_BUTTONS,
-        &packets::action_buttons(&buttons),
+        &packets::action_buttons(game.buttons()),
     )?;
     out.send(
         opcode::SMSG_UPDATE_OBJECT,
@@ -476,6 +476,8 @@ fn self_create(
         .set(f::PLAYER_BYTES_2, u32::from(c.facial_hair) | 0x02 << 24)
         .set(f::PLAYER_BYTES_3, c.gender.into())
         .set(f::PLAYER_XP, 0)
+        // The right-hand vertical bar (toggle 0x4), where food, drink and the racial sit.
+        .set(f::PLAYER_FIELD_BYTES, 0x04 << 16)
         .set(f::PLAYER_NEXT_LEVEL_XP, next_level_xp)
         .set(f::PLAYER_WATCHED_FACTION_INDEX, u32::MAX);
     let pt = u16::from(power_type);

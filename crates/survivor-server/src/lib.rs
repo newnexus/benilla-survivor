@@ -5,6 +5,7 @@
 //! Loopback only, by construction: both listeners bind `127.0.0.1`.
 
 pub mod aim;
+pub mod bar;
 mod data;
 mod game;
 mod packets;

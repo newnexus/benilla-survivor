@@ -33,7 +33,7 @@ impl Game {
 
     /// The spell's rank chain (its rank 1) and rank, from the class's trainer rows; a spell no
     /// trainer teaches is a chain of its own.
-    fn chain(&self, spell: u32) -> (u32, u32) {
+    pub(super) fn chain(&self, spell: u32) -> (u32, u32) {
         self.data
             .class_spells
             .iter()
@@ -211,21 +211,13 @@ impl Game {
                     opcode::SMSG_SUPERCEDED_SPELL,
                     &packets::superceded_spell(old, spell),
                 );
-                for b in &mut self.buttons {
-                    if *b == old {
-                        *b = spell;
-                    }
-                }
                 // The client keeps the old rank on its bar unless told.
-                self.send(opcode::SMSG_ACTION_BUTTONS, &packets::action_buttons(&self.buttons));
+                self.bar_learn(Some(old), spell);
             }
             None => {
                 self.player.spells.push(spell);
                 self.send(opcode::SMSG_LEARNED_SPELL, &packets::learned_spell(spell));
-                if let Some(b) = self.buttons[..12].iter_mut().find(|b| **b == 0) {
-                    *b = spell;
-                    self.send(opcode::SMSG_ACTION_BUTTONS, &packets::action_buttons(&self.buttons));
-                }
+                self.bar_learn(None, spell);
             }
         }
     }
@@ -236,7 +228,7 @@ impl Game {
         let Some(pick) = self.pick.take() else { return };
         self.shift_timers(now.saturating_duration_since(pick.paused_at));
         // The client's buff timers ran on through the pause.
-        self.send_meal_auras(now);
+        self.send_auras(now);
         self.root_counter += 1;
         self.send(
             opcode::SMSG_FORCE_MOVE_UNROOT,
@@ -293,6 +285,7 @@ impl Game {
         }
         self.next_regen += by;
         self.shift_meals(by);
+        self.shift_buffs(by);
     }
 }
 
@@ -300,6 +293,7 @@ impl Game {
 impl Drop for Game {
     fn drop(&mut self) {
         crate::aim::set(None);
+        crate::bar::clear();
         if self.pick.is_some() {
             picks::clear();
         }

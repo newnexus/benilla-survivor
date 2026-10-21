@@ -156,6 +156,7 @@ impl PluginGroup for GamePlugins {
             .add(PortraitPlugin)
             .add(TextInputPlugin)
             .add(UiScriptPlugin)
+            .add(crate::survivor_frames::plugin) // survivor
             // Before CvarPlugin, so the resource exists when `load_config` applies the saved value.
             .add(crate::video::VideoPlugin)
             // A CVar knob too, so before CvarPlugin for the same reason.
