@@ -111,8 +111,11 @@ impl Game {
         for (i, &s) in keep.iter().enumerate() {
             buttons[MAIN_BAR - keep.len() + i] = s;
         }
-        for (i, &w) in b.extras.iter().take(MAIN_BAR).enumerate() {
-            buttons[RIGHT_BAR + i] = w;
+        // Centred on the bar: its ends run under the minimap and the bags on a phone's bigger UI.
+        let extras: Vec<u32> = b.extras.iter().copied().take(MAIN_BAR).collect();
+        let first = RIGHT_BAR + (MAIN_BAR - extras.len()) / 2;
+        for (i, &w) in extras.iter().enumerate() {
+            buttons[first + i] = w;
         }
         self.buttons = buttons;
         crate::bar::post(b.queue.clone(), fired);
