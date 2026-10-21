@@ -25,6 +25,7 @@ mod barrier;
 mod countdown;
 mod quest_frame;
 mod quest_panel;
+mod chest_glow;
 mod haven;
 mod queue;
 mod settings;
@@ -44,7 +45,7 @@ impl Plugin for SurvivorUiPlugin {
             .add_systems(Update, (show_offer, take_card, hover_cards).chain())
             .add_systems(Update, follow_aim)
             .add_systems(Update, preload_library)
-            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin, quest_panel::plugin));
+            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin));
     }
 }
 
@@ -146,6 +147,8 @@ struct Library {
     font: Handle<Font>,
     /// WoW's title face (`MORPHEUS.TTF`), for the quest window's headings.
     title_font: Handle<Font>,
+    /// Items' looks, for a chest card's icon.
+    item_displays: Option<benilla_formats::ItemDisplayCatalog>,
 }
 
 impl Library {
@@ -161,6 +164,7 @@ impl Library {
         ));
         let font = Font::try_from_bytes(chain.read("Fonts\\FRIZQT__.TTF")?)
             .map_err(|e| anyhow::anyhow!("FRIZQT__.TTF: {e}"))?;
+        let item_displays = benilla_formats::load_item_display_catalog(&mut chain).ok();
         let title_font = Font::try_from_bytes(chain.read("Fonts\\MORPHEUS.TTF")?)
             .map_err(|e| anyhow::anyhow!("MORPHEUS.TTF: {e}"))?;
         Ok(Self {
@@ -172,6 +176,7 @@ impl Library {
             globals,
             font: fonts.add(font),
             title_font: fonts.add(title_font),
+            item_displays,
         })
     }
 
@@ -205,6 +210,12 @@ impl Library {
     /// The spell's icon as an image, or `None` when it has none or it does not decode.
     fn icon(&self, spell: &SpellDisplay) -> Option<Image> {
         self.blp(spell.icon.as_deref()?)
+    }
+
+    /// An item's inventory icon.
+    fn item_icon(&self, display: u32) -> Option<Image> {
+        let icon = self.item_displays.as_ref()?.get(display)?.icon.clone()?;
+        self.blp(&icon)
     }
 
     /// An interface texture (`path` without `.blp`) as an image.
@@ -397,7 +408,9 @@ fn spawn_screen(
         .with_children(|root| {
             root.spawn(text(
                 font,
-                format!("LEVEL UP!  {} -> {}", offer.level.saturating_sub(1), offer.level),
+                offer.title.clone().unwrap_or_else(|| {
+                    format!("LEVEL UP!  {} -> {}", offer.level.saturating_sub(1), offer.level)
+                }),
                 9.0 * vh,
                 GOLD,
             ));
@@ -427,7 +440,7 @@ fn spawn_card(
 ) {
     let font = &library.font;
     let spell = library.spells.get(card.spell);
-    let name = spell.map_or_else(|| format!("Spell {}", card.spell), |s| s.name.clone());
+    let mut name = spell.map_or_else(|| format!("Spell {}", card.spell), |s| s.name.clone());
     let edge = if card.rarity == 0 { CARD_EDGE } else { rarity_color(card.rarity) };
     let (tag, tag_color) = match (card.replaces, spell.and_then(rank_number)) {
         _ if !card.boost.is_empty() => (
@@ -438,9 +451,26 @@ fn spawn_card(
         (Some(_), None) => ("UPGRADE".to_owned(), UPGRADE_BLUE),
         (None, _) => ("NEW!".to_owned(), NEW_GREEN),
     };
-    let kind = if card.defensive { "Defensive" } else { "Damage" };
-    let description = spell.map(|s| library.description(s)).unwrap_or_default();
-    let icon = spell.and_then(|s| library.icon(s)).map(|i| images.add(i));
+    let mut kind = if card.defensive { "Defensive" } else { "Damage" }.to_owned();
+    let mut description = spell.map(|s| library.description(s)).unwrap_or_default();
+    let mut icon = spell.and_then(|s| library.icon(s)).map(|i| images.add(i));
+    let mut tag = tag;
+    let mut tag_color = tag_color;
+    let mut lines = card.boost.clone();
+    // A chest's item: its own name, icon, slot and stats.
+    if let Some(item) = &card.item {
+        name = item.name.clone();
+        icon = library.item_icon(item.display).map(|i| images.add(i));
+        tag = if item.upgrade {
+            "UPGRADE".to_owned()
+        } else {
+            RARITY_NAMES[usize::from(card.rarity.min(4))].to_owned()
+        };
+        tag_color = rarity_color(card.rarity);
+        kind = item.slot.clone();
+        description = String::new();
+        lines = item.lines.clone();
+    }
     row.spawn((
         CardButton {
             offer,
@@ -490,7 +520,7 @@ fn spawn_card(
         c.spawn(text(font, name, 4.0 * vh, name_color));
         c.spawn(text(font, tag, 2.5 * vh, tag_color));
         // An upgrade's lines, big, in its colour: what the card does.
-        for line in &card.boost {
+        for line in &lines {
             c.spawn(text(font, line.clone(), 3.0 * vh, rarity_color(card.rarity)));
         }
         c.spawn(text(font, kind, 2.2 * vh, MUTED));

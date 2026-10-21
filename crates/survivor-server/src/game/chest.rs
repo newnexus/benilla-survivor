@@ -29,6 +29,12 @@ pub(crate) struct Chest {
     opened: bool,
 }
 
+impl Chest {
+    pub(crate) fn is_opened(&self) -> bool {
+        self.opened
+    }
+}
+
 /// The chests from the world data, with guids of their own.
 pub(crate) fn chests(data: &crate::data::WorldData) -> Vec<Chest> {
     data.chests
@@ -89,6 +95,7 @@ impl Game {
         for c in &mut self.chests {
             c.opened = false;
         }
+        self.roll_chest_loot();
     }
 
     /// The chests coming into view and leaving it; an opened one is gone.
@@ -175,7 +182,7 @@ impl Game {
             money_text(price),
             money_text(self.chest_price)
         );
-        self.open_chest_offer(now);
+        self.open_chest_offer(i, now);
     }
 
     /// `CMSG_GAMEOBJECT_QUERY`: a chest's name and look.

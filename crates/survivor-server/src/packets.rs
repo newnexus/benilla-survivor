@@ -1,6 +1,6 @@
 //! Server packet bodies, byte for byte as benilla-protocol parses them.
 
-use crate::data::{CreatureTemplate, ItemTemplate};
+use crate::data::{ChestTemplate, CreatureTemplate, ItemTemplate};
 use crate::wire::Body;
 
 /// Update-field indices (vmangos `UpdateFields_1_12_1.h`).
@@ -33,6 +33,14 @@ pub(crate) mod f {
     pub const MAXDAMAGE: u16 = 135;
     pub const MOD_CAST_SPEED: u16 = 145;
     pub const NPC_FLAGS: u16 = 147;
+    pub const GO_DISPLAYID: u16 = 8;
+    pub const GO_ROTATION: u16 = 10;
+    pub const GO_STATE: u16 = 14;
+    pub const GO_POS_X: u16 = 15;
+    pub const GO_POS_Y: u16 = 16;
+    pub const GO_POS_Z: u16 = 17;
+    pub const GO_FACING: u16 = 18;
+    pub const GO_TYPE_ID: u16 = 21;
     pub const STAT0: u16 = 150;
     pub const BASE_HEALTH: u16 = 163;
     pub const PLAYER_BYTES: u16 = 193;
@@ -61,6 +69,7 @@ const OUT_OF_RANGE: u8 = 4;
 /// `TYPEID_*`.
 const TYPEID_ITEM: u8 = 1;
 const TYPEID_UNIT: u8 = 3;
+const TYPEID_GAMEOBJECT: u8 = 5;
 pub(crate) const TYPEID_PLAYER: u8 = 4;
 /// `UPDATEFLAG_*`.
 pub(crate) const UPDATEFLAG_SELF: u8 = 0x01;
@@ -123,6 +132,13 @@ pub(crate) enum Update {
         guid: u64,
         fields: Fields,
     },
+    /// A game object standing still: a position block, no movement.
+    GameObject {
+        guid: u64,
+        pos: [f32; 3],
+        facing: f32,
+        fields: Fields,
+    },
     OutOfRange(Vec<u64>),
 }
 
@@ -172,6 +188,22 @@ pub(crate) fn update_object(updates: &[Update]) -> Vec<u8> {
             }
             Update::Values { guid, fields } => {
                 b.u8(VALUES).packed_guid(*guid);
+                fields.write(&mut b);
+            }
+            Update::GameObject {
+                guid,
+                pos,
+                facing,
+                fields,
+            } => {
+                b.u8(CREATE_OBJECT)
+                    .packed_guid(*guid)
+                    .u8(TYPEID_GAMEOBJECT)
+                    .u8(UPDATEFLAG_ALL | UPDATEFLAG_HAS_POSITION);
+                for v in pos {
+                    b.f32(*v);
+                }
+                b.f32(*facing).u32(1);
                 fields.write(&mut b);
             }
             Update::OutOfRange(guids) => {
@@ -233,6 +265,71 @@ pub(crate) fn creature_create(
         speeds,
         fields,
     }
+}
+
+/// `TYPEMASK_OBJECT | TYPEMASK_GAMEOBJECT`.
+const GAMEOBJECT_TYPE_MASK: u32 = 0x21;
+/// `GAMEOBJECT_TYPE_CHEST`.
+const GAMEOBJECT_TYPE_CHEST: u32 = 3;
+
+/// A chest's create, closed (`GO_STATE_READY`).
+pub(crate) fn gameobject_create(
+    guid: u64,
+    t: &ChestTemplate,
+    pos: [f32; 3],
+    facing: f32,
+    rotation: [f32; 4],
+) -> Update {
+    let mut fields = Fields::default();
+    fields
+        .guid(f::GUID, guid)
+        .set(f::TYPE, GAMEOBJECT_TYPE_MASK)
+        .set(f::ENTRY, t.entry)
+        .setf(f::SCALE_X, if t.size > 0.0 { t.size } else { 1.0 })
+        .set(f::GO_DISPLAYID, t.display)
+        .set(f::GO_STATE, 1)
+        .setf(f::GO_POS_X, pos[0])
+        .setf(f::GO_POS_Y, pos[1])
+        .setf(f::GO_POS_Z, pos[2])
+        .setf(f::GO_FACING, facing)
+        .set(f::GO_TYPE_ID, GAMEOBJECT_TYPE_CHEST);
+    for (k, r) in rotation.iter().enumerate() {
+        fields.setf(f::GO_ROTATION + k as u16, *r);
+    }
+    Update::GameObject {
+        guid,
+        pos,
+        facing,
+        fields,
+    }
+}
+
+/// `SMSG_GAMEOBJECT_QUERY_RESPONSE`: a chest's name and look, or the "no such object" form.
+pub(crate) fn gameobject_query_response(entry: u32, t: Option<&ChestTemplate>) -> Vec<u8> {
+    let mut b = Body::new();
+    let Some(t) = t else {
+        b.u32(entry | 0x8000_0000);
+        return b.0;
+    };
+    b.u32(entry)
+        .u32(GAMEOBJECT_TYPE_CHEST)
+        .u32(t.display)
+        .cstr(&t.name)
+        .cstr("")
+        .cstr("")
+        .cstr("")
+        .cstr("");
+    for _ in 0..24 {
+        b.u32(0);
+    }
+    b.0
+}
+
+/// `SMSG_FORCE_RUN_SPEED_CHANGE`: the player runs at `speed` yards a second.
+pub(crate) fn force_run_speed(guid: u64, counter: u32, speed: f32) -> Vec<u8> {
+    let mut b = Body::new();
+    b.packed_guid(guid).u32(counter).f32(speed);
+    b.0
 }
 
 /// An item's create entry, owned by and contained in `owner`.
@@ -838,5 +935,23 @@ mod tests {
         whole(opcode::MSG_MOVE_TELEPORT_ACK, &teleport(7, 1, [1.0, 2.0, 3.0], 0.5, 1000));
         whole(opcode::SMSG_REMOVED_SPELL, &removed_spell(143));
         whole(opcode::SMSG_NOTIFICATION, &notification("Safe in Deathknell"));
+        let chest = ChestTemplate {
+            entry: 106318,
+            name: "Battered Chest".into(),
+            display: 259,
+            size: 1.0,
+        };
+        let go = 0xF110_0000_0000_0000 | (106318 << 24) | 3;
+        let ServerPacket::UpdateObject { objects, .. } = whole(
+            opcode::SMSG_UPDATE_OBJECT,
+            &update_object(&[gameobject_create(go, &chest, [1.0, 2.0, 3.0], 0.5, [0.0, 0.0, 0.2, 0.98])]),
+        ) else {
+            panic!("an update object");
+        };
+        assert_eq!(objects.len(), 1);
+        whole(opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE, &gameobject_query_response(106318, Some(&chest)));
+        whole(opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE, &gameobject_query_response(9, None));
+        whole(opcode::SMSG_FORCE_RUN_SPEED_CHANGE, &force_run_speed(7, 1, 7.7));
+        whole(opcode::SMSG_LOOT_MONEY_NOTIFY, &17u32.to_le_bytes());
     }
 }

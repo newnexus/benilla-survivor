@@ -261,6 +261,9 @@ fn export_spells(
     Ok(count)
 }
 
+/// Chest gear goes up to this wearing level: Tirisfall's own.
+const GEAR_MAX_LEVEL: i64 = 14;
+
 /// `chests.tsv`: every chest vmangos places on Tirisfall's ground (a `GAMEOBJECT_TYPE_CHEST` named
 /// a chest, lockbox or coffer), outside the towns, with its template's look.
 fn export_chests(
@@ -823,6 +826,34 @@ fn main() -> Result<()> {
         writeln!(start, "{class}\t{item}\t{amount}")?;
     }
     std::fs::write(out.join("start_items.tsv"), start)?;
+
+    // Chest gear: the zone's weapons and armour of common and uncommon make, for any Forsaken
+    // class, by the level that may wear them. Their rarity in a run is the survivor's own.
+    let mut stmt = conn.prepare(
+        "SELECT entry, required_level FROM item_template t
+         WHERE patch = (SELECT MAX(patch) FROM item_template u
+                        WHERE u.entry = t.entry AND u.patch <= ?1)
+           AND class IN (2, 4) AND quality IN (1, 2) AND display_id > 0
+           AND required_level BETWEEN 1 AND ?2
+           AND inventory_type IN (1, 3, 5, 6, 7, 8, 9, 10, 16, 20, 13, 17, 21, 14, 15, 26, 22, 23)
+           AND (allowable_class = -1 OR allowable_class & ?3 != 0)
+           AND start_quest = 0
+           AND name NOT LIKE '%Test%' AND name NOT LIKE '%Deprecated%'
+           AND name NOT LIKE '%(old)%' AND name NOT LIKE '%[PH]%'
+           AND name NOT LIKE 'Monster -%' AND name NOT LIKE '%Unused%' AND name NOT LIKE '%NPC%'
+           AND name NOT LIKE '%QA%' AND name NOT LIKE '%DEBUG%'
+         ORDER BY entry",
+    )?;
+    let class_mask: i64 = CLASSES.iter().map(|c| 1i64 << (c - 1)).sum();
+    let mut gear = String::from("entry\trequired_level\n");
+    for r in stmt.query_map(rusqlite::params![PATCH, GEAR_MAX_LEVEL, class_mask], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (entry, level) = r?;
+        items_used.insert(entry);
+        writeln!(gear, "{entry}\t{level}")?;
+    }
+    std::fs::write(out.join("gear.tsv"), gear)?;
 
     let mut stmt = conn.prepare(
         "SELECT entry, class, subclass, name, display_id, quality, inventory_type, delay,

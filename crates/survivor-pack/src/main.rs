@@ -283,11 +283,15 @@ fn main() -> Result<()> {
     let mut creatures_tsv: Option<PathBuf> = None;
     // `--gameobjects <chests.tsv>`: the models of the objects the server places (column 4).
     let mut objects_tsv: Option<PathBuf> = None;
+    // `--items <items.tsv>`: the worn and held looks of the items the server deals (column 5).
+    let mut items_tsv: Option<PathBuf> = None;
     while let Some(a) = args.next() {
         if a == "--creatures" {
             creatures_tsv = args.next().map(PathBuf::from);
         } else if a == "--gameobjects" {
             objects_tsv = args.next().map(PathBuf::from);
+        } else if a == "--items" {
+            items_tsv = args.next().map(PathBuf::from);
         } else {
             logs.push(PathBuf::from(a));
         }
@@ -366,6 +370,39 @@ fn main() -> Result<()> {
             let model = String::from_utf8_lossy(&strings[off..end]).into_owned();
             if !model.is_empty() {
                 p.keep_asset(&model);
+            }
+        }
+    }
+    if let Some(tsv) = &items_tsv {
+        let text = std::fs::read_to_string(tsv).with_context(|| tsv.display().to_string())?;
+        let displays: std::collections::BTreeSet<u32> = text
+            .lines()
+            .skip(1)
+            .filter_map(|l| l.split('\t').nth(4)?.parse().ok())
+            .collect();
+        let mut item_chain = Chain::open(std::path::Path::new(&data))?;
+        let catalog = benilla_formats::load_item_display_catalog(&mut item_chain)?;
+        // An item's model, skin and body-region textures are files named after it, in a folder
+        // by slot or region: keep every one whose name starts with one of the item's names.
+        let mut names = std::collections::BTreeSet::new();
+        for d in displays.iter().filter_map(|&d| catalog.get(d)) {
+            for n in d.model.iter().chain(&d.model_texture).chain(&d.region_textures).flatten() {
+                let base = norm(n);
+                let base = base.rsplit('\\').next().unwrap_or(&base);
+                let base = base.trim_end_matches(".mdx").trim_end_matches(".m2");
+                if !base.is_empty() {
+                    names.insert(base.to_owned());
+                }
+            }
+        }
+        for entry in chain.list()? {
+            let key = norm(&entry.name);
+            if !key.starts_with("item\\") {
+                continue;
+            }
+            let file = key.rsplit('\\').next().unwrap_or(&key);
+            if names.iter().any(|n| file.starts_with(n.as_str())) {
+                p.keep_asset(&entry.name);
             }
         }
     }

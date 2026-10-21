@@ -18,6 +18,23 @@ pub struct Card {
     /// An upgrade to the skill `spell`, already known, in lines ("+22% damage"); empty for a
     /// card that teaches.
     pub boost: Vec<String>,
+    /// A chest's item instead of a skill (`spell` is then 0).
+    pub item: Option<ItemCard>,
+}
+
+/// An item on a chest's card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ItemCard {
+    pub entry: u32,
+    pub name: String,
+    /// `ItemDisplayInfo.dbc` row, for its icon.
+    pub display: u32,
+    /// "Head", "Main Hand"...
+    pub slot: String,
+    /// What it gives: armour or damage, and its stats.
+    pub lines: Vec<String>,
+    /// The item worn already: taking it raises its item level for the run.
+    pub upgrade: bool,
 }
 
 /// The cards for one level gained.
@@ -28,6 +45,8 @@ pub struct Offer {
     /// The level just reached.
     pub level: u32,
     pub cards: Vec<Card>,
+    /// The screen's heading when it is not a level-up ("Battered Chest").
+    pub title: Option<String>,
 }
 
 struct Board {
@@ -58,10 +77,20 @@ pub fn choose(id: u64, index: usize) {
 
 /// Show `cards` for `level`; the offer's id comes back.
 pub(crate) fn post(level: u32, cards: Vec<Card>) -> u64 {
+    post_titled(level, cards, None)
+}
+
+/// Show `cards` under `title` (a chest's name), or as a level-up.
+pub(crate) fn post_titled(level: u32, cards: Vec<Card>, title: Option<String>) -> u64 {
     let mut b = board();
     let id = b.next_id;
     b.next_id += 1;
-    b.offer = Some(Offer { id, level, cards });
+    b.offer = Some(Offer {
+        id,
+        level,
+        cards,
+        title,
+    });
     b.choice = None;
     id
 }

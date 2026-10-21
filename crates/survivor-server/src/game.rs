@@ -14,6 +14,8 @@ use crate::roster::Character;
 use crate::wire::Sender;
 
 mod aura;
+mod chest;
+mod gear;
 mod meal;
 mod pick;
 mod quest;
@@ -299,6 +301,21 @@ pub(crate) struct Game {
     /// For a quest text's `$N`, `$C`, `$G`: the character's name, class and gender.
     name: String,
     gender: u8,
+    /// The world's chests, which the client has, the next one's price this run, the chest that
+    /// said its price, and each chest's items this run.
+    chests: Vec<chest::Chest>,
+    chests_shown: HashSet<usize>,
+    chest_price: u32,
+    chest_asked: Option<usize>,
+    chest_loot: Vec<Vec<gear::GearItem>>,
+    /// Chest gear worn this run, by equipment slot, and what the player has brought home.
+    run_gear: gear::RunGear,
+    collection: Vec<gear::GearItem>,
+    /// The starting gear's look per equipment slot, and its weapon: what a run ends back in.
+    start_visible: std::collections::HashMap<u16, u32>,
+    start_weapon: (f32, f32, Duration),
+    run_speed: f32,
+    speed_counter: u32,
     /// The test switches' state is in (`$SURVIVOR_QUESTS`), done on the first tick.
     seeded: bool,
     /// The world entry, which the client's movement clock counts from.
@@ -396,6 +413,12 @@ impl Game {
             .filter(|a| a.0 == c.class && a.3 == 0 && data.spells.contains_key(&a.2))
             .map(|a| a.2)
             .collect();
+        // The starting gear's look per equipment slot, before the pack moves into the game.
+        let start_visible = pack
+            .iter()
+            .filter(|p| (f::PLAYER_INV_SLOT_HEAD..f::PLAYER_INV_SLOT_HEAD + 38).contains(&p.field))
+            .map(|p| ((p.field - f::PLAYER_INV_SLOT_HEAD) / 2, p.entry))
+            .collect();
         let mut game = Self {
             curve,
             out,
@@ -415,7 +438,11 @@ impl Game {
             npcs_shown: HashSet::new(),
             talked: None,
             quests: quest::QuestLog::default(),
-            money: 0,
+            // `$SURVIVOR_MONEY=<copper>`: a purse to start with, for trying the chests.
+            money: std::env::var("SURVIVOR_MONEY")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
             start_spells: Vec::new(),
             start_buttons: buttons,
             teleport_counter: 0,
@@ -426,6 +453,17 @@ impl Game {
             open_panel: None,
             name: c.name.clone(),
             gender: c.gender,
+            chests: chest::chests(&data),
+            chests_shown: HashSet::new(),
+            chest_price: 0,
+            chest_asked: None,
+            chest_loot: Vec::new(),
+            run_gear: gear::RunGear::default(),
+            collection: Vec::new(),
+            start_visible,
+            start_weapon: weapon,
+            run_speed: 7.0,
+            speed_counter: 0,
             walked: false,
             started: now,
             player: Player {
@@ -463,6 +501,7 @@ impl Game {
             rng,
         };
         game.start_spells = game.player.spells.clone();
+        game.reset_chests();
         if game.in_run() {
             game.waves = Some(game.new_waves(now));
         }
@@ -524,6 +563,8 @@ impl Game {
         self.revive(now);
         self.check_barrier(now);
         self.update_visibility(now);
+        self.update_chests();
+        self.open_nearby_chest(now);
         self.walk_beats(now);
         self.guard_posts(now);
         self.update_npcs(now);
@@ -766,7 +807,8 @@ impl Game {
         let entry = self.mobs[i].entry;
         self.quest_kill(entry, guid);
         self.grant_meta_xp(self.meta_kill_xp(level));
-        let xp = kill_xp(level);
+        self.drop_gold(level);
+        let xp = (kill_xp(level) as f32 * (1.0 + self.gear(gear::GearStat::Experience))) as u32;
         eprintln!(
             "survivor: killed {} (level {level}) for {xp} xp",
             self.data.creatures[&self.mobs[i].entry].name
@@ -1100,7 +1142,13 @@ impl Game {
                     .collect();
                 near.sort_by(|a, b| a.1.total_cmp(&b.1));
                 let reach = if mods.legendary { upgrade::LEGENDARY_SPLASH } else { AOE_RADIUS };
-                let extra = if mods.legendary { usize::MAX } else { mods.targets as usize };
+                // Wrist gear: a chance of one more.
+                let lucky = usize::from(self.rng.unit() < self.gear(gear::GearStat::ExtraTarget));
+                let extra = if mods.legendary {
+                    usize::MAX
+                } else {
+                    mods.targets as usize + lucky
+                };
                 hits.extend(near.into_iter().filter(|n| n.1 <= reach).take(extra).map(|n| n.0));
             }
             hits
@@ -1126,7 +1174,7 @@ impl Game {
             self.apply_buff(spell, now);
         }
         let bonus = (self.player.level - 1) as f32 * SPELL_DAMAGE_PER_LEVEL;
-        let more = mods.damage;
+        let more = mods.damage * (1.0 + self.gear(gear::GearStat::Damage));
         for e in 0..3 {
             let (effect, base, die) = (s.effects[e], s.base_points[e], s.die_sides[e]);
             let roll = |rng: &mut Rng| {
@@ -1190,7 +1238,7 @@ impl Game {
 
     /// Damage to creature `i`: at once, or when the missile lands.
     fn deliver(&mut self, i: usize, s: &crate::data::SpellInfo, damage: f32, now: Instant) {
-        let crit = self.rng.unit() < 0.1;
+        let crit = self.rng.unit() < 0.1 + self.gear(gear::GearStat::Crit);
         let damage = (damage.max(1.0) * if crit { 1.5 } else { 1.0 }).round() as u32;
         let m = &mut self.mobs[i];
         if m.state == MobState::Idle {

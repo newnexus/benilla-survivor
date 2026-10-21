@@ -205,6 +205,7 @@ impl Game {
     fn start_run(&mut self, now: Instant) {
         self.mode = Mode::Run;
         self.waves = Some(self.new_waves(now));
+        self.reset_chests();
         self.player.level = 1;
         self.player.xp = 0;
         self.reset_character(self.curve.next_level(1));
@@ -219,6 +220,8 @@ impl Game {
         self.mode = Mode::Town(i);
         self.waves = None;
         self.clear_spawned(now);
+        self.end_run_gear(died);
+        self.publish_chest_glow();
         // An open level-up pick goes with the run.
         if self.pick.is_some() {
             picks::clear();

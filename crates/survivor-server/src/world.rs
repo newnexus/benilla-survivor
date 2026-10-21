@@ -223,6 +223,13 @@ fn session(
                     quest_message(g, op, &body);
                 }
             }
+            opcode::CMSG_GAMEOBJECT_QUERY => {
+                let Some(e) = body.get(..4) else { continue };
+                let entry = u32::from_le_bytes(e.try_into().expect("four bytes"));
+                if let Some(g) = playing.lock().expect("game").as_mut() {
+                    g.gameobject_query(entry);
+                }
+            }
             opcode::CMSG_CREATURE_QUERY => {
                 let Some(e) = body.get(..4) else { continue };
                 let entry = u32::from_le_bytes(e.try_into().expect("four bytes"));
@@ -342,7 +349,7 @@ fn unix_now() -> u32 {
 }
 
 /// The equipment slot an `InventoryType` goes in, or `None` for the backpack.
-fn equip_slot(inventory_type: u32) -> Option<u16> {
+pub(crate) fn equip_slot(inventory_type: u32) -> Option<u16> {
     Some(match inventory_type {
         1 => 0,       // head
         2 => 1,       // neck

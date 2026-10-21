@@ -121,7 +121,8 @@ impl Game {
 
     /// The mana, rage or energy `s` costs: the survivor's share of 1.12's, then its upgrades.
     pub(super) fn cost_of(&self, s: &crate::data::SpellInfo) -> u32 {
-        (s.cost as f32 * BASE_COST * self.mods(s.id).cost).round() as u32
+        let gear = (1.0 - self.gear(super::gear::GearStat::Cost)).max(FLOOR);
+        (s.cost as f32 * BASE_COST * self.mods(s.id).cost * gear).round() as u32
     }
 
     /// The cast time of `s` with its upgrades, ms.

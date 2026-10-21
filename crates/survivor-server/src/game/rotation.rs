@@ -138,7 +138,8 @@ impl Game {
     /// How long `spell` rests after its cast: its 1.12 cooldown, and for a damage spell at least
     /// its cast time and [`QUEUE_COOLDOWN_MS`] more.
     pub(super) fn survivor_cooldown(&self, spell: u32) -> Duration {
-        self.base_cooldown(spell).mul_f32(self.mods(spell).cooldown)
+        let gear = (1.0 - self.gear(super::gear::GearStat::Cooldown)).max(0.3);
+        self.base_cooldown(spell).mul_f32(self.mods(spell).cooldown * gear)
     }
 
     fn base_cooldown(&self, spell: u32) -> Duration {

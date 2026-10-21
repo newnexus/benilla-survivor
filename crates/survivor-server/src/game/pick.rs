@@ -26,6 +26,22 @@ pub(crate) struct Pick {
     paused_at: Instant,
     /// Each card's upgrade, by its place; none for a card that teaches.
     boosts: Vec<Option<super::upgrade::Boost>>,
+    /// A chest's items, by card; a chest's pick is one card and back to the world.
+    items: Vec<Option<super::gear::GearItem>>,
+    chest: bool,
+}
+
+impl Pick {
+    /// A chest's offer of `loot`.
+    pub(super) fn chest(id: u64, paused_at: Instant, loot: Vec<super::gear::GearItem>) -> Self {
+        Self {
+            id,
+            paused_at,
+            boosts: Vec::new(),
+            items: loot.into_iter().map(Some).collect(),
+            chest: true,
+        }
+    }
 }
 
 /// Of the cards dealt, about this share are upgrades to known skills.
@@ -112,6 +128,7 @@ impl Game {
                     defensive: kind == SpellKind::Defensive,
                     rarity: 0,
                     boost: Vec::new(),
+                    item: None,
                 };
                 Some((c.req_level, card))
             })
@@ -176,6 +193,7 @@ impl Game {
             defensive: self.kind(spell) == SpellKind::Defensive,
             rarity: b.rarity,
             boost: b.lines(),
+            item: None,
         }
     }
 
@@ -190,6 +208,19 @@ impl Game {
         let Some(card) = picks::offer().and_then(|o| o.cards.get(index).cloned()) else {
             return;
         };
+        if self.pick.as_ref().is_some_and(|p| p.chest) {
+            let item = self
+                .pick
+                .as_mut()
+                .and_then(|p| p.items.get_mut(index))
+                .and_then(Option::take);
+            if let Some(g) = item {
+                self.take_item(g);
+            }
+            picks::clear();
+            self.resume(Instant::now());
+            return;
+        }
         let boost = self
             .pick
             .as_mut()
@@ -221,13 +252,15 @@ impl Game {
             id,
             paused_at: now,
             boosts,
+            items: Vec::new(),
+            chest: false,
         });
         self.freeze(now);
     }
 
     /// Stop everything that moves: the player is rooted, a cast in progress is cut, and every
     /// creature stands where it is.
-    fn freeze(&mut self, now: Instant) {
+    pub(super) fn freeze(&mut self, now: Instant) {
         self.cancel_cast();
         self.root_counter += 1;
         self.send(

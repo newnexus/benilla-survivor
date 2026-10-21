@@ -1,0 +1,437 @@
+//! Chest gear. Each chest holds three items, rolled when a run starts: a weapon or a piece of
+//! armour the class can wear (`gear.tsv`, the zone's own), each with a rarity of the survivor's
+//! own, common to legendary. Besides its armour or damage every item gives one stat by its slot,
+//! stronger the rarer it is; an epic or legendary one gives a second.
+//!
+//! | slot | stat | | slot | stat |
+//! |---|---|---|---|---|
+//! | head | crit chance | | feet | run speed |
+//! | shoulders, weapons | spell and weapon damage | | wrists | a chance to hit one more enemy |
+//! | chest | health | | hands | pickup range |
+//! | waist | cooldowns | | back | experience |
+//! | legs | mana, rage and energy cost | | | |
+//!
+//! Taking a card wears the item for the run; taking the one already worn raises its item level
+//! instead (up to [`MAX_UPGRADES`]). What is worn when the player walks back into town, alive,
+//! joins their collection; dying loses it.
+
+use std::collections::HashMap;
+use std::time::Instant;
+
+use benilla_protocol::messages::opcode;
+
+use super::Game;
+use crate::packets::{self, f, Fields};
+use crate::picks::{Card, ItemCard};
+
+/// The cards a chest offers.
+const LOOT: usize = 3;
+/// Rarity weights, common to legendary, and how far each pushes the slot's stat.
+const RARITY_WEIGHTS: [u32; 5] = [48, 28, 15, 7, 2];
+const RARITY_RATE: [f32; 5] = [1.0, 1.4, 1.8, 1.8, 2.2];
+pub(crate) const RARITY_NAMES: [&str; 5] = ["Common", "Uncommon", "Rare", "Epic", "Legendary"];
+/// Item level upgrades one item can take, each this much stronger and this many levels.
+pub(crate) const MAX_UPGRADES: u32 = 5;
+const UPGRADE_STEP: f32 = 0.15;
+const UPGRADE_LEVELS: u32 = 3;
+/// Base run speed, yards a second.
+const RUN_SPEED: f32 = 7.0;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub(crate) enum GearStat {
+    Crit,
+    Damage,
+    Health,
+    Cooldown,
+    Cost,
+    Speed,
+    ExtraTarget,
+    Pickup,
+    Experience,
+}
+
+impl GearStat {
+    /// A common item's amount (a share, 0.05 = 5%).
+    fn base(self) -> f32 {
+        match self {
+            Self::Crit => 0.03,
+            Self::Damage => 0.06,
+            Self::Health => 0.12,
+            Self::Cooldown => 0.06,
+            Self::Cost => 0.08,
+            Self::Speed => 0.06,
+            Self::ExtraTarget => 0.15,
+            Self::Pickup => 0.2,
+            Self::Experience => 0.08,
+        }
+    }
+
+    fn line(self, x: f32) -> String {
+        let p = (x * 100.0).round();
+        match self {
+            Self::Crit => format!("+{p}% critical strike chance"),
+            Self::Damage => format!("+{p}% damage"),
+            Self::Health => format!("+{p}% health"),
+            Self::Cooldown => format!("-{p}% cooldowns"),
+            Self::Cost => format!("-{p}% mana, rage and energy cost"),
+            Self::Speed => format!("+{p}% run speed"),
+            Self::ExtraTarget => format!("{p}% chance to hit one more enemy"),
+            Self::Pickup => format!("+{p}% pickup range"),
+            Self::Experience => format!("+{p}% experience"),
+        }
+    }
+
+    /// The stat an equipment slot gives.
+    fn of_slot(slot: u16) -> Self {
+        match slot {
+            0 => Self::Crit,
+            4 => Self::Health,
+            5 => Self::Cooldown,
+            6 => Self::Cost,
+            7 => Self::Speed,
+            8 => Self::ExtraTarget,
+            9 => Self::Pickup,
+            14 => Self::Experience,
+            _ => Self::Damage,
+        }
+    }
+}
+
+const ALL_STATS: [GearStat; 9] = [
+    GearStat::Crit,
+    GearStat::Damage,
+    GearStat::Health,
+    GearStat::Cooldown,
+    GearStat::Cost,
+    GearStat::Speed,
+    GearStat::ExtraTarget,
+    GearStat::Pickup,
+    GearStat::Experience,
+];
+
+/// One rolled item: in a chest, worn, or brought home.
+#[derive(Clone, Debug)]
+pub(crate) struct GearItem {
+    pub(crate) entry: u32,
+    pub(crate) rarity: u8,
+    /// Its stats at no upgrades.
+    stats: Vec<(GearStat, f32)>,
+    pub(crate) upgrades: u32,
+}
+
+impl GearItem {
+    fn stat_values(&self) -> impl Iterator<Item = (GearStat, f32)> + '_ {
+        let k = 1.0 + UPGRADE_STEP * self.upgrades as f32;
+        self.stats.iter().map(move |&(s, x)| (s, x * k))
+    }
+}
+
+/// The equipment slot names on a card.
+fn slot_name(slot: u16) -> &'static str {
+    match slot {
+        0 => "Head",
+        2 => "Shoulders",
+        4 => "Chest",
+        5 => "Waist",
+        6 => "Legs",
+        7 => "Feet",
+        8 => "Wrists",
+        9 => "Hands",
+        14 => "Back",
+        15 => "Main Hand",
+        16 => "Off Hand",
+        17 => "Ranged",
+        _ => "Item",
+    }
+}
+
+/// Whether `class` wears or wields an item of `item_class`/`subclass` in `inventory_type`.
+fn wearable(class: u8, item_class: u32, subclass: u32, inventory_type: u32) -> bool {
+    match item_class {
+        // Armour: cloth for all, leather up from rogues, mail for warriors, shields for warriors.
+        4 => match subclass {
+            0 => true,
+            1 => true,
+            2 => matches!(class, 1 | 4),
+            3 => class == 1,
+            6 => class == 1,
+            _ => false,
+        },
+        // Weapons a class trains.
+        2 => {
+            let ok: &[u32] = match class {
+                1 => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 15, 16, 18],
+                4 => &[2, 3, 4, 7, 13, 15, 16, 18],
+                5 => &[4, 10, 15, 19],
+                8 | 9 => &[7, 10, 15, 19],
+                _ => &[],
+            };
+            ok.contains(&subclass) && !(inventory_type == 17 && class == 4)
+        }
+        _ => false,
+    }
+}
+
+impl Game {
+    /// Three items for every chest, for this run.
+    pub(super) fn roll_chest_loot(&mut self) {
+        let pool: Vec<u32> = self
+            .data
+            .gear
+            .iter()
+            .filter(|&&(entry, _)| {
+                self.data.items.get(&entry).is_some_and(|t| {
+                    wearable(self.player.class, t.class, t.subclass, t.inventory_type)
+                        && super::super::world::equip_slot(t.inventory_type).is_some()
+                })
+            })
+            .map(|g| g.0)
+            .collect();
+        self.chest_loot = (0..self.chests.len())
+            .map(|_| {
+                let mut items: Vec<GearItem> = Vec::new();
+                while items.len() < LOOT && !pool.is_empty() {
+                    let entry = pool[(self.rng.next() % pool.len() as u64) as usize];
+                    if items.iter().any(|i| i.entry == entry) {
+                        continue;
+                    }
+                    items.push(self.roll_item(entry));
+                }
+                items
+            })
+            .collect();
+        self.publish_chest_glow();
+    }
+
+    /// An item of `entry` with its rarity and stats rolled.
+    fn roll_item(&mut self, entry: u32) -> GearItem {
+        let total: u32 = RARITY_WEIGHTS.iter().sum();
+        let mut roll = (self.rng.next() % u64::from(total)) as u32;
+        let mut rarity = 0u8;
+        for (r, &w) in RARITY_WEIGHTS.iter().enumerate() {
+            if roll < w {
+                rarity = r as u8;
+                break;
+            }
+            roll -= w;
+        }
+        let slot = self
+            .data
+            .items
+            .get(&entry)
+            .and_then(|t| super::super::world::equip_slot(t.inventory_type))
+            .unwrap_or(15);
+        let main = GearStat::of_slot(slot);
+        let mut stats = vec![(main, main.base() * RARITY_RATE[usize::from(rarity)])];
+        if rarity >= 3 {
+            let others: Vec<GearStat> = ALL_STATS.iter().copied().filter(|&s| s != main).collect();
+            let second = others[(self.rng.next() % others.len() as u64) as usize];
+            stats.push((second, second.base()));
+        }
+        GearItem {
+            entry,
+            rarity,
+            stats,
+            upgrades: 0,
+        }
+    }
+
+    /// Tell the screen where the closed chests are and how good their best item is.
+    pub(super) fn publish_chest_glow(&self) {
+        let list = self
+            .chests
+            .iter()
+            .zip(&self.chest_loot)
+            .filter(|(c, _)| !c.is_opened())
+            .map(|(c, loot)| (c.pos, loot.iter().map(|i| i.rarity).max().unwrap_or(0)))
+            .collect();
+        crate::chest_glow::set(if self.in_run() { list } else { Vec::new() });
+    }
+
+    /// The cards of chest `i`'s items.
+    pub(super) fn chest_cards(&self, i: usize) -> (Vec<Card>, Vec<GearItem>) {
+        let loot = self.chest_loot.get(i).cloned().unwrap_or_default();
+        let cards = loot.iter().map(|g| self.item_card(g)).collect();
+        (cards, loot)
+    }
+
+    fn item_card(&self, g: &GearItem) -> Card {
+        let t = self.data.items.get(&g.entry);
+        let slot = t
+            .and_then(|t| super::super::world::equip_slot(t.inventory_type))
+            .unwrap_or(15);
+        let worn = self.run_gear.get(&slot).filter(|w| w.entry == g.entry);
+        let mut lines = Vec::new();
+        if let Some(t) = t {
+            if t.damage.1 > 0.0 {
+                lines.push(format!(
+                    "{:.0} - {:.0} damage, {:.1} speed",
+                    t.damage.0,
+                    t.damage.1,
+                    t.delay as f32 / 1000.0
+                ));
+            } else if t.armor > 0 {
+                lines.push(format!("{} armor", t.armor));
+            }
+        }
+        match worn {
+            Some(w) if w.upgrades < MAX_UPGRADES => lines.push(format!(
+                "Worn: item level +{} (upgrade {} of {MAX_UPGRADES})",
+                UPGRADE_LEVELS,
+                w.upgrades + 1
+            )),
+            _ => {}
+        }
+        let shown = worn.unwrap_or(g);
+        lines.extend(shown.stat_values().map(|(s, x)| s.line(x)));
+        Card {
+            spell: 0,
+            replaces: None,
+            defensive: false,
+            rarity: shown.rarity,
+            boost: Vec::new(),
+            item: Some(ItemCard {
+                entry: g.entry,
+                name: t.map_or_else(|| format!("Item {}", g.entry), |t| t.name.clone()),
+                display: t.map_or(0, |t| t.display),
+                slot: slot_name(slot).to_owned(),
+                lines,
+                upgrade: worn.is_some(),
+            }),
+        }
+    }
+
+    /// Take a chest's item: wear it for the run, or raise the one already worn.
+    pub(super) fn take_item(&mut self, g: GearItem) {
+        let Some(t) = self.data.items.get(&g.entry).cloned() else { return };
+        let Some(slot) = super::super::world::equip_slot(t.inventory_type) else { return };
+        let name = t.name.clone();
+        match self.run_gear.get_mut(&slot) {
+            Some(w) if w.entry == g.entry => {
+                w.upgrades = (w.upgrades + 1).min(MAX_UPGRADES);
+                eprintln!("survivor: {name} upgraded to +{}", w.upgrades);
+                let line = format!("{name}: item level +{}", w.upgrades * UPGRADE_LEVELS);
+                self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+            }
+            _ => {
+                eprintln!(
+                    "survivor: wearing {} {name} in slot {slot}",
+                    RARITY_NAMES[usize::from(g.rarity)]
+                );
+                self.run_gear.insert(slot, g);
+                let mut fl = Fields::default();
+                fl.set(
+                    f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE,
+                    t.entry,
+                );
+                self.values(self.player.guid, fl);
+                if slot == 15 && t.damage.1 > 0.0 {
+                    self.player.weapon = (
+                        t.damage.0.max(1.0),
+                        t.damage.1.max(2.0),
+                        std::time::Duration::from_millis(u64::from(t.delay.max(1000))),
+                    );
+                    let mut fl = Fields::default();
+                    fl.setf(f::MINDAMAGE, self.player.weapon.0)
+                        .setf(f::MAXDAMAGE, self.player.weapon.1)
+                        .set(f::BASEATTACKTIME, t.delay.max(1000));
+                    self.values(self.player.guid, fl);
+                }
+            }
+        }
+        self.apply_gear();
+    }
+
+    /// The run gear's total for `stat`.
+    pub(super) fn gear(&self, stat: GearStat) -> f32 {
+        self.run_gear
+            .values()
+            .flat_map(GearItem::stat_values)
+            .filter(|&(s, _)| s == stat)
+            .map(|(_, x)| x)
+            .sum()
+    }
+
+    /// What the gear changes on the character itself: health and run speed.
+    pub(super) fn apply_gear(&mut self) {
+        let base = super::base_health(self.player.class)
+            + super::HEALTH_PER_LEVEL * (self.player.level - 1);
+        let max = (base as f32 * (1.0 + self.gear(GearStat::Health))).round() as u32;
+        if max != self.player.max_health {
+            let gained = max.saturating_sub(self.player.max_health);
+            self.player.max_health = max;
+            self.player.health = (self.player.health + gained).min(max);
+            let mut fl = Fields::default();
+            fl.set(f::MAXHEALTH, max).set(f::HEALTH, self.player.health);
+            self.values(self.player.guid, fl);
+        }
+        let speed = RUN_SPEED * (1.0 + self.gear(GearStat::Speed));
+        if (speed - self.run_speed).abs() > 0.01 {
+            self.run_speed = speed;
+            self.speed_counter += 1;
+            self.send(
+                opcode::SMSG_FORCE_RUN_SPEED_CHANGE,
+                &packets::force_run_speed(self.player.guid, self.speed_counter, speed),
+            );
+        }
+    }
+
+    /// Back in town alive: what was worn joins the collection; dead, it is lost. Either way the
+    /// character wears their own things again.
+    pub(super) fn end_run_gear(&mut self, died: bool) {
+        let worn: Vec<(u16, GearItem)> = self.run_gear.drain().collect();
+        for (slot, g) in &worn {
+            let name = self.data.items.get(&g.entry).map_or("", |t| t.name.as_str()).to_owned();
+            if died {
+                eprintln!("survivor: lost {name}");
+                continue;
+            }
+            eprintln!("survivor: brought home {name}");
+            let line = format!(
+                "Brought home: {name} ({})",
+                RARITY_NAMES[usize::from(g.rarity)]
+            );
+            self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+            self.collection.push(g.clone());
+            let start = self.start_visible.get(slot).copied().unwrap_or(0);
+            let mut fl = Fields::default();
+            fl.set(f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE, start);
+            self.values(self.player.guid, fl);
+        }
+        if died {
+            for (slot, _) in &worn {
+                let start = self.start_visible.get(slot).copied().unwrap_or(0);
+                let mut fl = Fields::default();
+                fl.set(f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE, start);
+                self.values(self.player.guid, fl);
+            }
+        }
+        self.player.weapon = self.start_weapon;
+        let mut fl = Fields::default();
+        fl.setf(f::MINDAMAGE, self.player.weapon.0)
+            .setf(f::MAXDAMAGE, self.player.weapon.1)
+            .set(f::BASEATTACKTIME, self.player.weapon.2.as_millis() as u32);
+        self.values(self.player.guid, fl);
+        self.apply_gear();
+    }
+
+    /// A chest opened: its items on the card screen, the world paused.
+    pub(super) fn open_chest_offer(&mut self, i: usize, now: Instant) {
+        let (cards, loot) = self.chest_cards(i);
+        if cards.is_empty() {
+            return;
+        }
+        let title = self
+            .data
+            .chest_templates
+            .get(&self.chests[i].entry)
+            .map(|t| t.name.clone());
+        let id = crate::picks::post_titled(self.player.level, cards, title);
+        self.pick = Some(super::pick::Pick::chest(id, now, loot));
+        self.freeze(now);
+        self.publish_chest_glow();
+    }
+}
+
+/// Run gear by equipment slot.
+pub(crate) type RunGear = HashMap<u16, GearItem>;

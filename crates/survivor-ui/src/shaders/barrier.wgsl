@@ -7,6 +7,8 @@
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::{globals, view}
 
+@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> tint: vec4<f32>;
+
 fn hash(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
 }
@@ -55,9 +57,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // The seam where the wall meets the ground burns brightest.
     heat = heat + 0.7 * (1.0 - smoothstep(0.0, 0.06, v)) * (0.8 + 0.2 * sin(t * 2.0 + u * 3.0));
 
-    // Deep amber at the edges, pale gold at the hottest.
-    let cool = vec3<f32>(0.45, 0.22, 0.02);
-    let hot = vec3<f32>(1.0, 0.9, 0.55);
+    // The tint deep at the edges, paling at the hottest.
+    let cool = tint.rgb * 0.4;
+    let hot = mix(tint.rgb, vec3<f32>(1.0), 0.45);
     var colour = mix(cool, hot, clamp(heat * 0.9, 0.0, 1.0)) * heat;
     // Up close the wall thins to a veil, so a camera at the barrier still sees the world.
     let near = distance(in.world_position.xyz, view.world_position);

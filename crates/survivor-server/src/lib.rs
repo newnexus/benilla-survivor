@@ -11,6 +11,26 @@ mod game;
 mod packets;
 pub mod picks;
 pub mod quest_board;
+
+/// The closed chests and the rarity of the best item in each, for the screen's glow.
+pub mod chest_glow {
+    use std::sync::Mutex;
+
+    static GLOWS: Mutex<(u64, Vec<([f32; 3], u8)>)> = Mutex::new((0, Vec::new()));
+
+    /// Every closed chest's place and best rarity (0 common to 4 legendary), and a version that
+    /// changes with the list.
+    pub fn current() -> (u64, Vec<([f32; 3], u8)>) {
+        GLOWS.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    pub(crate) fn set(list: Vec<([f32; 3], u8)>) {
+        if let Ok(mut g) = GLOWS.lock() {
+            g.0 += 1;
+            g.1 = list;
+        }
+    }
+}
 mod realmd;
 mod roster;
 pub mod town;

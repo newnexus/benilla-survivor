@@ -30,10 +30,34 @@ const TILE: f32 = 533.333_3;
 const CHUNK: f32 = TILE / 16.0;
 
 /// The flame: a fragment stage of our own over the stock mesh pipeline.
-type FlameMaterial = ExtendedMaterial<StandardMaterial, Flame>;
+pub(crate) type FlameMaterial = ExtendedMaterial<StandardMaterial, Flame>;
 
+/// The flame's colour: its hottest is this, paling toward white.
 #[derive(Asset, AsBindGroup, Clone, TypePath)]
-struct Flame {}
+pub(crate) struct Flame {
+    #[uniform(100)]
+    tint: LinearRgba,
+}
+
+/// The barrier's gold.
+const GOLD: Color = Color::srgb(1.0, 0.72, 0.18);
+
+/// A flame material of `color`: glowing, see-through, both faces.
+pub(crate) fn flame(color: Color) -> FlameMaterial {
+    FlameMaterial {
+        base: StandardMaterial {
+            // Unlit and added onto what is behind: a glow, depth-tested, writing no depth.
+            unlit: true,
+            alpha_mode: AlphaMode::Add,
+            cull_mode: None,
+            fog_enabled: false,
+            ..default()
+        },
+        extension: Flame {
+            tint: color.to_linear(),
+        },
+    }
+}
 
 impl MaterialExtension for Flame {
     fn fragment_shader() -> ShaderRef {
@@ -57,17 +81,7 @@ fn spawn_walls(
     mut materials: ResMut<Assets<FlameMaterial>>,
 ) {
     let mut ground = Ground::open();
-    let material = materials.add(FlameMaterial {
-        base: StandardMaterial {
-            // Unlit and added onto what is behind: a glow, depth-tested, writing no depth.
-            unlit: true,
-            alpha_mode: AlphaMode::Add,
-            cull_mode: None,
-            fog_enabled: false,
-            ..default()
-        },
-        extension: Flame {},
-    });
+    let material = materials.add(flame(GOLD));
     for town in TOWNS {
         let at = benilla_assets::coords::wow_to_bevy([town.centre[0], town.centre[1], 0.0]);
         commands.spawn((

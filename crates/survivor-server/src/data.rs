@@ -43,6 +43,24 @@ pub(crate) struct Spawn {
     pub(crate) walks_path: bool,
 }
 
+/// A chest standing in the world (`chests.tsv`).
+#[derive(Clone, Debug)]
+pub(crate) struct ChestSpawn {
+    pub(crate) entry: u32,
+    pub(crate) pos: [f32; 3],
+    pub(crate) facing: f32,
+    pub(crate) rotation: [f32; 4],
+}
+
+/// A chest's look and name.
+#[derive(Clone, Debug)]
+pub(crate) struct ChestTemplate {
+    pub(crate) entry: u32,
+    pub(crate) name: String,
+    pub(crate) display: u32,
+    pub(crate) size: f32,
+}
+
 /// A town person's beat (`npcs.tsv`'s patrol and side): the path in [`WorldData::patrols`] they
 /// walk, and how far to its right.
 #[derive(Clone, Copy, Debug, Default)]
@@ -173,6 +191,10 @@ pub(crate) struct WorldData {
     pub(crate) patrols: HashMap<u32, Vec<PatrolPoint>>,
     /// The waypoint paths creatures walk while idle, by spawn guid.
     pub(crate) mob_paths: HashMap<u32, Vec<PatrolPoint>>,
+    pub(crate) chests: Vec<ChestSpawn>,
+    pub(crate) chest_templates: HashMap<u32, ChestTemplate>,
+    /// Chest gear (`gear.tsv`): `(item, level to wear it)`, the templates in `items`.
+    pub(crate) gear: Vec<(u32, u32)>,
     pub(crate) quests: Vec<Quest>,
     pub(crate) items: HashMap<u32, ItemTemplate>,
     /// `(class, item, amount)`.
@@ -297,6 +319,24 @@ impl WorldData {
                     side: num(r.get(7)),
                 },
             ));
+        }
+        for r in rows(&dir, "chests.tsv") {
+            let entry = num(r.get(1));
+            d.chest_templates.entry(entry).or_insert_with(|| ChestTemplate {
+                entry,
+                name: r.get(2).cloned().unwrap_or_default(),
+                display: num(r.get(3)),
+                size: num(r.get(4)),
+            });
+            d.chests.push(ChestSpawn {
+                entry,
+                pos: [num(r.get(5)), num(r.get(6)), num(r.get(7))],
+                facing: num(r.get(8)),
+                rotation: [num(r.get(9)), num(r.get(10)), num(r.get(11)), num(r.get(12))],
+            });
+        }
+        for r in rows(&dir, "gear.tsv") {
+            d.gear.push((num(r.first()), num(r.get(1))));
         }
         for r in rows(&dir, "mob_paths.tsv") {
             d.mob_paths.entry(num(r.first())).or_default().push(PatrolPoint {
