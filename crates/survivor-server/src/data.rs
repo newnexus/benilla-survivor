@@ -153,8 +153,11 @@ pub(crate) const NPC_QUESTGIVER: u32 = 0x2;
 pub(crate) struct Quest {
     pub(crate) id: u32,
     pub(crate) level: u32,
+    /// 1.12's level and chain gates, kept from the data; the survivor offers every quest at once.
+    #[allow(dead_code)]
     pub(crate) min_level: u32,
     /// The quest that must be turned in first, 0 for none.
+    #[allow(dead_code)]
     pub(crate) prev: u32,
     pub(crate) giver: u32,
     pub(crate) ender: u32,

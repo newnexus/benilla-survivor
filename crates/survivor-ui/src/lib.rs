@@ -27,6 +27,8 @@ mod quest_frame;
 mod quest_panel;
 mod chest_glow;
 mod armory;
+mod orbs;
+mod trails;
 mod haven;
 mod queue;
 mod settings;
@@ -46,7 +48,8 @@ impl Plugin for SurvivorUiPlugin {
             .add_systems(Update, (show_offer, take_card, hover_cards).chain())
             .add_systems(Update, follow_aim)
             .add_systems(Update, preload_library)
-            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin, armory::plugin));
+            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin, armory::plugin, orbs::plugin, trails::plugin))
+            .add_systems(Update, shrink_cards);
     }
 }
 
@@ -76,6 +79,12 @@ struct Ding {
 
 /// Above the world and the game's interface; below benilla's loading cover (1000).
 const SCREEN_Z: i32 = 950;
+/// The survivor's big windows (the level-up cards, the quest window) are drawn this much
+/// smaller on a computer's screen than on a phone's.
+const SHRINK: f32 = if cfg!(target_os = "android") { 1.0 } else { 0.72 };
+/// The purse's top edge, in screen heights: under the player's portrait, which is bigger on a
+/// phone.
+const PURSE_TOP: f32 = if cfg!(target_os = "android") { 15.0 } else { 10.5 };
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
 const CARD_BG: Color = Color::srgba(0.07, 0.06, 0.05, 0.96);
 const CARD_BG_HOVER: Color = Color::srgba(0.16, 0.13, 0.08, 0.98);
@@ -292,6 +301,18 @@ fn printf(template: &str, numbers: &[TokenNumber]) -> String {
 /// The number in "Rank N".
 fn rank_number(spell: &SpellDisplay) -> Option<u32> {
     spell.rank.as_deref()?.strip_prefix("Rank ")?.trim().parse().ok()
+}
+
+/// On a computer the cards are drawn smaller: everything in the screen but its dim.
+fn shrink_cards(mut commands: Commands, screens: Query<&Children, Added<ScreenRoot>>) {
+    if SHRINK == 1.0 {
+        return;
+    }
+    for children in &screens {
+        for &c in children {
+            commands.entity(c).insert(UiTransform::from_scale(Vec2::splat(SHRINK)));
+        }
+    }
 }
 
 /// Read the cards' game data (spells, icons, the font) once the player is in the world, so the

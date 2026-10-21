@@ -17,6 +17,7 @@ mod aura;
 mod chest;
 mod gear;
 mod meal;
+mod orbs;
 mod pick;
 mod quest;
 mod rotation;
@@ -296,10 +297,14 @@ pub(crate) struct Game {
     waves: Option<spawner::Waves>,
     /// Outside the barrier, counting down to the run.
     countdown: Option<Instant>,
+    /// Souls and coins loose in the world, the last orb's id, and the last tick's time.
+    orbs: Vec<orbs::Loose>,
+    next_orb: u64,
+    last_tick: Instant,
     /// The run's upgrade cards taken, by skill.
     upgrades: upgrade::Upgrades,
-    /// The quest window open on the screen: its board id, the giver, the quest, what for.
-    open_panel: Option<(u64, u64, u32, crate::quest_board::PanelKind)>,
+    /// The quest window open on the screen: its board id and the giver.
+    open_panel: Option<(u64, u64)>,
     /// For a quest text's `$N`, `$C`, `$G`: the character's name, class and gender.
     name: String,
     gender: u8,
@@ -461,6 +466,9 @@ impl Game {
             seeded: false,
             waves: None,
             countdown: None,
+            orbs: Vec::new(),
+            next_orb: 0,
+            last_tick: now,
             upgrades: upgrade::Upgrades::default(),
             open_panel: None,
             name: c.name.clone(),
@@ -592,6 +600,7 @@ impl Game {
         self.guard_posts(now);
         self.update_npcs(now);
         self.talk_nearby(now);
+        self.publish_trails(now);
         self.tick_waves(now);
         self.player_attack(now);
         self.tick_spells(now);
@@ -600,6 +609,9 @@ impl Game {
         for i in 0..self.mobs.len() {
             self.mob_ai(i, now);
         }
+        let dt = now.saturating_duration_since(self.last_tick).as_secs_f32().min(0.5);
+        self.last_tick = now;
+        self.tick_orbs(now, dt);
         crate::aim::set(self.player.target);
         crate::town::set_in_town(!self.in_run());
         self.open_pending_pick(now);
@@ -830,13 +842,15 @@ impl Game {
         let entry = self.mobs[i].entry;
         self.quest_kill(entry, guid);
         self.grant_meta_xp(self.meta_kill_xp(level));
-        self.drop_gold(level);
         let xp = (kill_xp(level) as f32 * (1.0 + self.gear(gear::GearStat::Experience))) as u32;
+        // The soul and the gold drop at the corpse and come back to the player.
+        let copper = self.gold_for(level);
+        let at = self.mobs[i].pos;
+        self.drop_orbs(at, xp, copper, now);
         eprintln!(
             "survivor: killed {} (level {level}) for {xp} xp",
             self.data.creatures[&self.mobs[i].entry].name
         );
-        self.grant_xp(guid, xp);
     }
 
     fn grant_xp(&mut self, victim: u64, xp: u32) {

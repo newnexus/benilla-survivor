@@ -48,20 +48,42 @@ struct PanelButton {
 #[derive(Default)]
 struct Shown {
     root: Option<Entity>,
-    panel: Option<(u64, f32)>,
+    /// The window, its tab and the screen height it was laid out for.
+    panel: Option<(u64, usize, f32)>,
     parchment: Option<Handle<Image>>,
+    /// The tab open, for the window `.0`.
+    tab: (u64, usize),
 }
+
+/// A quest's tab on the window's left.
+#[derive(Component)]
+struct QuestTab(usize);
+
+const TAB: Color = Color::srgba(0.25, 0.15, 0.06, 0.25);
+const TAB_ON: Color = Color::srgba(0.45, 0.25, 0.05, 0.6);
 
 fn show_panel(
     mut commands: Commands,
     screen: Res<crate::Screen>,
     mut images: ResMut<Assets<Image>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    tabs: Query<(&QuestTab, &Interaction), Changed<Interaction>>,
     mut shown: Local<Shown>,
 ) {
     let panel = quest_board::current();
     let height = window.single().map_or(720.0, Window::height);
-    let wanted = panel.as_ref().map(|p| (p.id, height));
+    if let Some(p) = &panel {
+        if shown.tab.0 != p.id {
+            shown.tab = (p.id, 0);
+        }
+        for (t, i) in &tabs {
+            if *i == Interaction::Pressed && t.0 < p.entries.len() {
+                shown.tab.1 = t.0;
+            }
+        }
+    }
+    let selected = shown.tab.1;
+    let wanted = panel.as_ref().map(|p| (p.id, selected, height));
     if wanted == shown.panel {
         return;
     }
@@ -93,7 +115,10 @@ fn show_panel(
         .unwrap_or_default();
     let fonts = (library.font.clone(), library.title_font.clone());
     drop(library);
-    let root = spawn_panel(&mut commands, &panel, &parchment, &coins, &fonts);
+    if panel.entries.is_empty() {
+        return;
+    }
+    let root = spawn_panel(&mut commands, &panel, selected.min(panel.entries.len() - 1), &parchment, &coins, &fonts);
     shown.root = Some(root);
     shown.panel = wanted;
 }
@@ -101,6 +126,7 @@ fn show_panel(
 fn spawn_panel(
     commands: &mut Commands,
     panel: &Panel,
+    selected: usize,
     parchment: &Handle<Image>,
     coins: &[Option<Coin>; 3],
     (font, title_font): &(Handle<Font>, Handle<Font>),
@@ -130,7 +156,8 @@ fn spawn_panel(
         )
     };
     let id = panel.id;
-    let accept_label = match panel.kind {
+    let e = &panel.entries[selected];
+    let accept_label = match e.kind {
         PanelKind::Offer => "Accept",
         PanelKind::Reward => "Complete",
     };
@@ -149,8 +176,53 @@ fn spawn_panel(
             },
             GlobalZIndex(PANEL_Z),
             Pickable::IGNORE,
+            UiTransform::from_scale(Vec2::splat(crate::SHRINK)),
         ))
         .with_children(|root| {
+            // The giver's quests, a tab each, when there is more than one.
+            if panel.entries.len() > 1 {
+                root.spawn((
+                    Sheet,
+                    ImageNode::new(parchment.clone()).with_mode(NodeImageMode::Stretch),
+                    Node {
+                        width: Val::Vh(32.0),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Vh(2.0)),
+                        row_gap: Val::Vh(1.0),
+                        align_self: AlignSelf::FlexStart,
+                        margin: UiRect::top(Val::Vh(7.0)),
+                        ..default()
+                    },
+                ))
+                .with_children(|tabs| {
+                    tabs.spawn(text("Quests", title_font, 4.4, HEADING));
+                    for (k, q) in panel.entries.iter().enumerate() {
+                        let mark = match q.kind {
+                            PanelKind::Offer => "!",
+                            PanelKind::Reward => "?",
+                        };
+                        tabs.spawn((
+                            QuestTab(k),
+                            Button,
+                            Node {
+                                flex_direction: FlexDirection::Row,
+                                column_gap: Val::Vh(1.0),
+                                padding: UiRect::axes(Val::Vh(1.2), Val::Vh(0.8)),
+                                border_radius: BorderRadius::all(Val::Vh(0.8)),
+                                ..default()
+                            },
+                            BackgroundColor(if k == selected { TAB_ON } else { TAB }),
+                        ))
+                        .with_children(|b| {
+                            b.spawn(text(mark, title_font, 3.6, Color::srgb(0.75, 0.42, 0.0)));
+                            b.spawn((text(&q.title, font, 2.9, INK), Node {
+                                flex_shrink: 1.0,
+                                ..default()
+                            }));
+                        });
+                    }
+                });
+            }
             // The story.
             root.spawn(sheet(Node {
                 width: Val::Vh(78.0),
@@ -168,7 +240,7 @@ fn spawn_panel(
                     },
                 ))
                 .with_children(|h| {
-                    h.spawn((text(&panel.title, title_font, 6.0, HEADING), Node {
+                    h.spawn((text(&e.title, title_font, 6.0, HEADING), Node {
                         flex_shrink: 1.0,
                         ..default()
                     }));
@@ -208,7 +280,7 @@ fn spawn_panel(
                     },
                 ))
                 .with_children(|t| {
-                    t.spawn(text(&panel.text, font, 3.4, INK));
+                    t.spawn(text(&e.text, font, 3.4, INK));
                 });
             });
             // The objectives and rewards, floating beside it, and the button under them.
@@ -221,15 +293,15 @@ fn spawn_panel(
                 ..default()
             })
             .with_children(|col| {
-                if panel.kind == PanelKind::Offer && !panel.objectives.is_empty() {
+                if e.kind == PanelKind::Offer && !e.objectives.is_empty() {
                     col.spawn(sheet(Node::default())).with_children(|o| {
                         o.spawn(text("Quest Objectives", title_font, 5.0, HEADING));
-                        o.spawn(text(&panel.objectives, font, 3.3, INK));
+                        o.spawn(text(&e.objectives, font, 3.3, INK));
                     });
                 }
                 col.spawn(sheet(Node::default())).with_children(|r| {
                     r.spawn(text("Rewards", title_font, 5.0, HEADING));
-                    if panel.money > 0 {
+                    if e.money > 0 {
                     r.spawn(Node {
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
@@ -238,9 +310,9 @@ fn spawn_panel(
                     })
                     .with_children(|line| {
                         line.spawn(text("You will receive:", font, 3.3, INK));
-                        let (g, s, c) = (panel.money / 10_000, panel.money / 100 % 100, panel.money % 100);
+                        let (g, s, c) = (e.money / 10_000, e.money / 100 % 100, e.money % 100);
                         for (amount, coin) in [(g, &coins[0]), (s, &coins[1]), (c, &coins[2])] {
-                            if amount == 0 && !(panel.money == 0 && std::ptr::eq(coin, &coins[2])) {
+                            if amount == 0 && !(e.money == 0 && std::ptr::eq(coin, &coins[2])) {
                                 continue;
                             }
                             line.spawn(text(&amount.to_string(), font, 3.6, HEADING));
@@ -261,8 +333,8 @@ fn spawn_panel(
                         }
                     });
                     }
-                    if panel.xp > 0 {
-                        r.spawn(text(&format!("Experience: {}", panel.xp), font, 3.3, INK));
+                    if e.xp > 0 {
+                        r.spawn(text(&format!("Experience: {}", e.xp), font, 3.3, INK));
                     }
                 });
                 col.spawn(Node {
@@ -272,7 +344,7 @@ fn spawn_panel(
                 col.spawn((
                     PanelButton {
                         panel: id,
-                        answer: Answer::Accept,
+                        answer: Answer::Accept(e.quest),
                     },
                     Button,
                     Sheet,

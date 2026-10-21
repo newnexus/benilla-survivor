@@ -722,6 +722,7 @@ pub(crate) mod quest {
     }
 
     /// The greeting panel: one row per quest, `(quest, icon)`.
+    #[allow(dead_code)]
     pub(crate) fn list(npc: u64, greeting: &str, rows: &[(&Quest, u32)]) -> Vec<u8> {
         let mut b = Body::new();
         b.u64(npc).cstr(greeting).u32(0).u32(0).u8(rows.len() as u8);

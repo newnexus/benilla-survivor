@@ -13,11 +13,18 @@ pub enum PanelKind {
     Reward,
 }
 
-/// One quest giver's window, its text ready to show (WoW's `$N`, `$B`... already filled in).
+/// One quest giver's window: every quest they have for the player, one tab each.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Panel {
     /// Distinct per window, so an answer to an old one is never taken for the new one.
     pub id: u64,
+    pub entries: Vec<Entry>,
+}
+
+/// One quest on the window, its text ready to show (WoW's `$N`, `$B`... already filled in).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub quest: u32,
     pub kind: PanelKind,
     pub title: String,
     /// The giver's story (an offer) or thanks (a hand-in).
@@ -31,7 +38,8 @@ pub struct Panel {
 /// The screen's answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
-    Accept,
+    /// Accept (or complete) this quest.
+    Accept(u32),
     Close,
 }
 

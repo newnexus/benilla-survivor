@@ -233,6 +233,7 @@ impl Game {
         self.mode = Mode::Town(i);
         self.waves = None;
         self.clear_spawned(now);
+        self.end_orbs(died);
         self.end_run_gear(died);
         self.publish_chest_glow();
         // An open level-up pick goes with the run.

@@ -408,6 +408,7 @@ impl Drop for Game {
         crate::town::set_in_town(false);
         crate::town::set_countdown(None);
         crate::quest_board::clear();
+        crate::trails::set(Vec::new());
         if self.pick.is_some() {
             picks::clear();
         }

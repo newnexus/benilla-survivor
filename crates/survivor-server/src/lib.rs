@@ -6,6 +6,78 @@
 
 pub mod aim;
 pub mod armory;
+
+/// Where the quest givers with something for the player stand, while in town, for the screen's
+/// trails to them.
+pub mod trails {
+    use std::sync::Mutex;
+
+    static GIVERS: Mutex<Vec<[f32; 3]>> = Mutex::new(Vec::new());
+
+    pub fn current() -> Vec<[f32; 3]> {
+        GIVERS.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    pub(crate) fn set(list: Vec<[f32; 3]>) {
+        if let Ok(mut g) = GIVERS.lock() {
+            *g = list;
+        }
+    }
+}
+
+
+/// The souls and coins loose in the world, for the screen to draw.
+pub mod orbs {
+    use std::sync::Mutex;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Kind {
+        /// A creature's experience: a light blue orb.
+        Soul,
+        /// Its gold: a coin.
+        Coin,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Orb {
+        pub id: u64,
+        pub kind: Kind,
+        /// World yards.
+        pub pos: [f32; 3],
+    }
+
+    static ORBS: Mutex<(u64, Vec<Orb>)> = Mutex::new((0, Vec::new()));
+
+    /// Every orb, and a count that moves on with each server tick.
+    pub fn current() -> (u64, Vec<Orb>) {
+        ORBS.lock().map(|o| o.clone()).unwrap_or_default()
+    }
+
+    pub(crate) fn set(list: Vec<Orb>) {
+        if let Ok(mut o) = ORBS.lock() {
+            if list.is_empty() && o.1.is_empty() {
+                return;
+            }
+            o.0 += 1;
+            o.1 = list;
+        }
+    }
+}
+
+/// The player's purse, copper, for the screen's corner.
+pub mod purse {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static MONEY: AtomicU32 = AtomicU32::new(0);
+
+    pub fn money() -> u32 {
+        MONEY.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set(copper: u32) {
+        MONEY.store(copper, Ordering::Relaxed);
+    }
+}
 pub mod bar;
 mod data;
 mod game;

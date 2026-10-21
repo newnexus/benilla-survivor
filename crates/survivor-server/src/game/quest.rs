@@ -12,7 +12,7 @@ use benilla_protocol::messages::opcode;
 use super::{dist2d, Game};
 use crate::data::{Quest, NPC_QUESTGIVER};
 use crate::packets::{f, quest, Fields};
-use crate::quest_board::{self, Answer, Panel, PanelKind};
+use crate::quest_board::{self, Answer, Entry, Panel, PanelKind};
 
 /// How close a quest giver must be to speak up, and how far to walk off before it will again.
 const TALK_RANGE: f32 = 5.0;
@@ -51,18 +51,14 @@ impl Game {
             .is_some_and(|q| q.kills.iter().zip(a.counts).all(|(&(_, need), c)| c >= need))
     }
 
-    /// What `entry` offers now: not done, not in the log, its prerequisite handed in and its
-    /// level reached.
+    /// What `entry` offers now: every quest of theirs not done and not in the log. No chain and
+    /// no level holds one back: a survivor takes them all at once.
     fn available(&self, entry: u32) -> Vec<&Quest> {
         self.data
             .quests
             .iter()
             .filter(|q| {
-                q.giver == entry
-                    && !self.quests.done.contains(&q.id)
-                    && self.slot_of(q.id).is_none()
-                    && (q.prev == 0 || self.quests.done.contains(&q.prev))
-                    && q.min_level <= self.meta.level
+                q.giver == entry && !self.quests.done.contains(&q.id) && self.slot_of(q.id).is_none()
             })
             .collect()
     }
@@ -106,6 +102,26 @@ impl Game {
         }
     }
 
+    /// The trails' ends: in town, every giver with a quest to offer or take back.
+    pub(super) fn publish_trails(&self, now: std::time::Instant) {
+        if self.in_run() || self.player.dead_until.is_some() {
+            crate::trails::set(Vec::new());
+            return;
+        }
+        let ends = self
+            .npcs
+            .iter()
+            .filter(|n| {
+                matches!(
+                    self.giver_status(n.entry),
+                    quest::STATUS_AVAILABLE | quest::STATUS_REWARD
+                )
+            })
+            .map(|n| n.here(now))
+            .collect();
+        crate::trails::set(ends);
+    }
+
     /// `CMSG_QUESTGIVER_STATUS_QUERY`.
     pub(crate) fn quest_status_query(&self, guid: u64) {
         if let Some(entry) = self.npc_entry(guid) {
@@ -113,32 +129,23 @@ impl Game {
         }
     }
 
-    /// Open `guid`'s panel, if it has something to say: a reward first, then its quests.
+    /// Open `guid`'s window, if it has something to say: its finished quests to hand in, then
+    /// every quest it offers, one tab each.
     pub(crate) fn quest_hello(&mut self, guid: u64) -> bool {
         let Some(entry) = self.npc_entry(guid) else {
             return false;
         };
-        if let Some(q) = self.rewardable(entry).first().map(|q| q.id) {
-            self.open_quest_panel(guid, q, PanelKind::Reward);
-            return true;
+        let mut list: Vec<(u32, PanelKind)> = self
+            .rewardable(entry)
+            .iter()
+            .map(|q| (q.id, PanelKind::Reward))
+            .collect();
+        list.extend(self.available(entry).iter().map(|q| (q.id, PanelKind::Offer)));
+        if list.is_empty() {
+            return false;
         }
-        match self.available(entry).as_slice() {
-            [] => false,
-            [q] => {
-                let q = q.id;
-                self.open_quest_panel(guid, q, PanelKind::Offer);
-                true
-            }
-            many => {
-                let rows: Vec<(&Quest, u32)> =
-                    many.iter().map(|&q| (q, quest::STATUS_AVAILABLE)).collect();
-                self.send(
-                    opcode::SMSG_QUESTGIVER_QUEST_LIST,
-                    &quest::list(guid, "", &rows),
-                );
-                true
-            }
-        }
+        self.open_quest_panel(guid, &list);
+        true
     }
 
     /// In town, a quest giver within reach speaks up once, until the player walks off.
@@ -189,46 +196,51 @@ impl Game {
         if offer || reward {
             // The stock list closes; ours opens.
             self.send(opcode::SMSG_GOSSIP_COMPLETE, &[]);
-            let kind = if offer { PanelKind::Offer } else { PanelKind::Reward };
-            self.open_quest_panel(guid, id, kind);
+            self.quest_hello(guid);
         }
     }
 
-    /// Put quest `id` of giver `guid` on the survivor's quest window.
-    fn open_quest_panel(&mut self, guid: u64, id: u32, kind: PanelKind) {
-        let Some(q) = self.quest(id).cloned() else { return };
-        let text = match kind {
-            PanelKind::Offer => &q.details,
-            PanelKind::Reward => &q.offer_text,
-        };
-        let panel = Panel {
-            id: 0,
-            kind,
-            title: q.title.clone(),
-            text: self.fill(text),
-            objectives: self.fill(&q.objectives),
-            money: q.money,
-            xp: q.xp,
-        };
-        let board_id = quest_board::post(panel);
-        self.open_panel = Some((board_id, guid, id, kind));
+    /// Put `quests` of giver `guid` on the survivor's quest window.
+    fn open_quest_panel(&mut self, guid: u64, quests: &[(u32, PanelKind)]) {
+        let entries = quests
+            .iter()
+            .filter_map(|&(id, kind)| {
+                let q = self.quest(id)?;
+                let text = match kind {
+                    PanelKind::Offer => &q.details,
+                    PanelKind::Reward => &q.offer_text,
+                };
+                Some(Entry {
+                    quest: id,
+                    kind,
+                    title: q.title.clone(),
+                    text: self.fill(text),
+                    objectives: self.fill(&q.objectives),
+                    money: q.money,
+                    xp: q.xp,
+                })
+            })
+            .collect();
+        let board_id = quest_board::post(Panel { id: 0, entries });
+        self.open_panel = Some((board_id, guid));
     }
 
     /// The window's answer: Accept takes the quest (or hands it in), the X closes it.
     pub(super) fn take_panel_answer(&mut self) {
         let Some((id, answer)) = quest_board::take_answer() else { return };
-        let Some((open, guid, quest, kind)) = self.open_panel else { return };
+        let Some((open, guid)) = self.open_panel else { return };
         if id != open {
             return;
         }
         self.open_panel = None;
         quest_board::clear();
-        if answer == Answer::Close {
-            return;
-        }
-        match kind {
-            PanelKind::Offer => self.quest_accept(guid, quest),
-            PanelKind::Reward => self.quest_turn_in(guid, quest),
+        let Answer::Accept(quest) = answer else { return };
+        // Handing in or taking it; either way the giver's window comes back with the rest.
+        let Some(entry) = self.npc_entry(guid) else { return };
+        if self.rewardable(entry).iter().any(|q| q.id == quest) {
+            self.quest_turn_in(guid, quest);
+        } else {
+            self.quest_accept(guid, quest);
         }
     }
 
@@ -301,7 +313,7 @@ impl Game {
         let Some(entry) = self.npc_entry(guid) else { return };
         if self.rewardable(entry).iter().any(|q| q.id == id) {
             self.send(opcode::SMSG_GOSSIP_COMPLETE, &[]);
-            self.open_quest_panel(guid, id, PanelKind::Reward);
+            self.quest_hello(guid);
         }
     }
 

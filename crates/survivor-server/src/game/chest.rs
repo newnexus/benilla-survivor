@@ -68,11 +68,11 @@ pub(crate) fn money_text(copper: u32) -> String {
 }
 
 impl Game {
-    /// A kill's gold: the player loots it at once.
-    pub(super) fn drop_gold(&mut self, level: u32) {
+    /// A kill's gold, copper: it drops as a coin ([`super::orbs`]).
+    pub(super) fn gold_for(&mut self, level: u32) -> u32 {
         let per = GOLD_PER_LEVEL.0
             + (self.rng.next() % u64::from(GOLD_PER_LEVEL.1 - GOLD_PER_LEVEL.0 + 1)) as u32;
-        self.add_money(level.max(1) * per);
+        level.max(1) * per
     }
 
     /// `copper` more in the purse, said as WoW says a loot.
@@ -83,6 +83,7 @@ impl Game {
     }
 
     pub(super) fn send_money(&self) {
+        crate::purse::set(self.money);
         let mut fl = Fields::default();
         fl.set(f::PLAYER_COINAGE, self.money);
         self.values(self.player.guid, fl);
