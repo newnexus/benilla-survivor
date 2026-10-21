@@ -315,6 +315,83 @@ fn shrink_cards(mut commands: Commands, screens: Query<&Children, Added<ScreenRo
     }
 }
 
+/// Tool, not game: every talent of the Forsaken classes with its tooltip text, to `out/talents.json`,
+/// and each icon's pixels to `out/icons/<name>.rgba` (`width height` then RGBA bytes), for the
+/// talent-tagging page (`cargo run -p survivor-ui --example talents -- <out>`).
+#[doc(hidden)]
+pub fn export_talents(out: &std::path::Path) -> Result<()> {
+    use std::fmt::Write as _;
+    let mut fonts = Assets::<Font>::default();
+    let mut library = Library::load(&mut fonts)?;
+    let talents = benilla_formats::load_talent_catalog(&mut library.chain)?;
+    std::fs::create_dir_all(out.join("icons"))?;
+    let esc = |s: &str| {
+        s.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "")
+    };
+    let classes = [(1u8, "Warrior"), (4, "Rogue"), (5, "Priest"), (8, "Mage"), (9, "Warlock")];
+    let mut j = String::from("[");
+    let mut first_tree = true;
+    for (class, class_name) in classes {
+        let mut tabs = talents.tabs_for_class(survivor_server::UNDEAD, class);
+        tabs.sort_by_key(|t| t.id);
+        for tab in tabs {
+            if !first_tree {
+                j.push(',');
+            }
+            first_tree = false;
+            write!(j, "{{\"class\":\"{class_name}\",\"tree\":\"{}\",\"talents\":[", esc(&tab.name))?;
+            let mut list: Vec<_> = talents.talents_in_tab(tab.id).to_vec();
+            list.sort_by_key(|t| (t.row, t.col));
+            for (k, t) in list.iter().enumerate() {
+                let max = t.max_rank().max(1) as usize;
+                let lo = library.spells.get(t.ranks[0]);
+                let hi = library.spells.get(t.ranks[max - 1]);
+                let name = lo.map_or_else(|| format!("Talent {}", t.id), |s| s.name.clone());
+                let d1 = lo.map(|s| library.description(s)).unwrap_or_default();
+                let dn = hi.map(|s| library.description(s)).unwrap_or_default();
+                let icon = lo.and_then(|s| s.icon.clone()).unwrap_or_default();
+                let icon_key = icon.rsplit('\\').next().unwrap_or("").to_ascii_lowercase();
+                if !icon_key.is_empty() && !out.join("icons").join(format!("{icon_key}.rgba")).exists() {
+                    if let Ok(bytes) = library.chain.read(&format!("{icon}.blp")) {
+                        if let Ok((w, h, px)) = benilla_formats::blp_to_rgba(&bytes) {
+                            let mut f = format!("{w} {h}\n").into_bytes();
+                            f.extend_from_slice(&px);
+                            std::fs::write(out.join("icons").join(format!("{icon_key}.rgba")), f)?;
+                        }
+                    }
+                }
+                let prereq = list
+                    .iter()
+                    .find(|p| p.id == t.prereq_talent && t.prereq_talent != 0)
+                    .and_then(|p| library.spells.get(p.ranks[0]))
+                    .map(|s| s.name.clone())
+                    .unwrap_or_default();
+                if k > 0 {
+                    j.push(',');
+                }
+                write!(
+                    j,
+                    "{{\"id\":{},\"name\":\"{}\",\"row\":{},\"col\":{},\"ranks\":{max},\"rank1\":\"{}\",\"rankMax\":\"{}\",\"icon\":\"{icon_key}\",\"requires\":\"{}\"}}",
+                    t.id,
+                    esc(&name),
+                    t.row,
+                    t.col,
+                    esc(&d1),
+                    esc(&dn),
+                    esc(&prereq)
+                )?;
+            }
+            j.push_str("]}");
+        }
+    }
+    j.push(']');
+    std::fs::write(out.join("talents.json"), j)?;
+    Ok(())
+}
+
 /// Read the cards' game data (spells, icons, the font) once the player is in the world, so the
 /// first level-up's cards come up without the wait.
 fn preload_library(

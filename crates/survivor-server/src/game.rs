@@ -43,6 +43,8 @@ const MELEE_REACH: f32 = 4.0;
 const LEASH: f32 = 70.0;
 /// Chasers keep this far apart round the player, and strike from as far as this.
 const SPREAD: f32 = 1.4;
+/// A chaser on its way looks for one to step aside from this often.
+const NUDGE_EVERY: Duration = Duration::from_millis(400);
 const SWING_REACH: f32 = MELEE_REACH * 1.5;
 /// A corpse stays this long before it is taken away.
 const CORPSE_TIME: Duration = Duration::from_secs(6);
@@ -136,7 +138,10 @@ struct Mob {
     spawned: bool,
     /// Where the player stood when the chaser last picked its spot.
     aimed_at: [f32; 3],
+    /// When a chaser on its way may next step aside from another.
+    nudge_at: Instant,
 }
+
 
 impl Mob {
     /// A creature of `t` at `level` standing at `pos`, idle and at full health. Health and
@@ -181,6 +186,7 @@ impl Mob {
             idle_until: now,
             spawned: false,
             aimed_at: [f32::MAX; 3],
+            nudge_at: now,
         }
     }
 
@@ -692,6 +698,58 @@ impl Game {
         }
     }
 
+    /// A chaser on its way with another within [`SPREAD`]: a short run sideways, away from it
+    /// and still forward, after which it picks its spot again. Two that meet both step apart.
+    fn nudge_aside(&mut self, i: usize, here: [f32; 3], now: Instant) -> bool {
+        let close = self
+            .mobs
+            .iter()
+            .enumerate()
+            .filter(|&(j, m)| j != i && m.alive() && m.state == MobState::Chasing)
+            .map(|(_, m)| m.here(now))
+            .map(|p| (dist2d(p, here), p))
+            .filter(|&(d, _)| d < SPREAD)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let Some((d, other)) = close else { return false };
+        let m = &self.mobs[i];
+        let Some(path) = m.path else { return false };
+        let (fx, fy) = (path.to[0] - here[0], path.to[1] - here[1]);
+        let flen = fx.hypot(fy).max(0.001);
+        let (mut ax, mut ay) = (here[0] - other[0], here[1] - other[1]);
+        if d < 0.05 {
+            // Right on top of each other: one to each side of the way.
+            let side = if i % 2 == 0 { 1.0 } else { -1.0 };
+            (ax, ay) = (-fy / flen * side, fx / flen * side);
+        }
+        let alen = ax.hypot(ay).max(0.001);
+        let to = [
+            here[0] + ax / alen * SPREAD * 1.2 + fx / flen * 1.5,
+            here[1] + ay / alen * SPREAD * 1.2 + fy / flen * 1.5,
+            path.to[2],
+        ];
+        let m = &mut self.mobs[i];
+        let dur = Duration::from_secs_f32(dist2d(here, to) / m.run_speed);
+        m.pos = here;
+        m.path = Some(Path {
+            from: here,
+            to,
+            start: now,
+            duration: dur,
+        });
+        m.nudge_at = now + NUDGE_EVERY;
+        // Its spot is picked afresh once the step is done.
+        m.aimed_at = [f32::MAX; 3];
+        let guid = m.guid;
+        if self.visible.contains(&i) {
+            let id = self.spline_id();
+            self.send(
+                opcode::SMSG_MONSTER_MOVE,
+                &packets::monster_move(guid, here, id, to, dur.as_millis() as u32),
+            );
+        }
+        true
+    }
+
     /// Where a chaser stands round the player: on a ring, at the bearing it comes from, slid
     /// along the ring until no other chaser's spot is within [`SPREAD`]; when the ring is full,
     /// the next ring out. So a crowd fans out round the player instead of stacking on one point.
@@ -1009,6 +1067,11 @@ impl Game {
         }
         let d = dist2d(here, me);
         let moving = m.path.is_some_and(|p| !p.done(now));
+        // On its way and walking into another chaser: a step aside, then on to its spot.
+        if moving && now >= m.nudge_at && self.nudge_aside(i, here, now) {
+            return;
+        }
+        let m = &mut self.mobs[i];
         let aim_off = dist2d(m.aimed_at, me) > 1.5;
         if d > SWING_REACH || (moving && aim_off) || (d > MELEE_REACH * 0.8 && m.path.is_none() && aim_off) {
             // Run to a spot of its own round the player, re-aimed when the player moves off.

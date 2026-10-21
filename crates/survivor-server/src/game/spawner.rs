@@ -175,9 +175,16 @@ impl Game {
         }
     }
 
-    /// A world creature spot out of sight but near, not in a town: where a spawn can stand.
+    /// A world creature spot out of sight but near, not in a town and with no living creature
+    /// on it: where a spawn can stand, nudged a little off the spot.
     fn spawn_spot(&mut self) -> Option<[f32; 3]> {
         let me = self.player.pos;
+        let taken: Vec<[f32; 3]> = self
+            .mobs
+            .iter()
+            .filter(|m| m.alive())
+            .map(|m| m.pos)
+            .collect();
         let spots: Vec<[f32; 3]> = self
             .data
             .spawns
@@ -185,6 +192,7 @@ impl Game {
             .map(|s| s.pos)
             .filter(|&p| (SPAWN_NEAR..=SPAWN_FAR).contains(&dist2d(p, me)))
             .filter(|&p| crate::town::town_at(p).is_none())
+            .filter(|&p| taken.iter().all(|&t| dist2d(t, p) >= super::SPREAD))
             .collect();
         if spots.is_empty() {
             // Nowhere known: a ring round the player, at their height.
@@ -193,7 +201,9 @@ impl Game {
             let p = [me[0] + a.cos() * d, me[1] + a.sin() * d, me[2]];
             return crate::town::town_at(p).is_none().then_some(p);
         }
-        Some(spots[(self.rng.next() % spots.len() as u64) as usize])
+        let p = spots[(self.rng.next() % spots.len() as u64) as usize];
+        let (a, r) = (self.rng.range(0.0, std::f32::consts::TAU), self.rng.range(0.0, 1.5));
+        Some([p[0] + a.cos() * r, p[1] + a.sin() * r, p[2]])
     }
 
     /// Into town: every spawned creature goes.
