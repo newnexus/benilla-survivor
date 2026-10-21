@@ -41,6 +41,9 @@ const TARGET_CONE: f32 = 1.05;
 const MELEE_REACH: f32 = 4.0;
 /// A chasing creature this far from its spawn gives up and walks home.
 const LEASH: f32 = 70.0;
+/// Chasers keep this far apart round the player, and strike from as far as this.
+const SPREAD: f32 = 1.4;
+const SWING_REACH: f32 = MELEE_REACH * 1.5;
 /// A corpse stays this long before it is taken away.
 const CORPSE_TIME: Duration = Duration::from_secs(6);
 /// The player's health gain per level.
@@ -131,6 +134,8 @@ struct Mob {
     idle_until: Instant,
     /// Sent by a run's spawner: chases from the start, follows anywhere, never comes back.
     spawned: bool,
+    /// Where the player stood when the chaser last picked its spot.
+    aimed_at: [f32; 3],
 }
 
 impl Mob {
@@ -175,6 +180,7 @@ impl Mob {
             route_next: 1,
             idle_until: now,
             spawned: false,
+            aimed_at: [f32::MAX; 3],
         }
     }
 
@@ -642,6 +648,9 @@ impl Game {
         for i in &gone {
             self.visible.remove(i);
         }
+        for &i in &creates {
+            self.level_to_player(i, now);
+        }
         if !creates.is_empty() || !gone.is_empty() {
             eprintln!(
                 "survivor: {} creatures come into view, {} leave ({} shown)",
@@ -681,6 +690,59 @@ impl Game {
             );
             self.visible.extend(chunk.iter().copied());
         }
+    }
+
+    /// Where a chaser stands round the player: on a ring, at the bearing it comes from, slid
+    /// along the ring until no other chaser's spot is within [`SPREAD`]; when the ring is full,
+    /// the next ring out. So a crowd fans out round the player instead of stacking on one point.
+    fn ring_spot(&self, i: usize, here: [f32; 3], me: [f32; 3], now: Instant) -> [f32; 3] {
+        let others: Vec<[f32; 3]> = self
+            .mobs
+            .iter()
+            .enumerate()
+            .filter(|&(j, m)| j != i && m.alive() && m.state == MobState::Chasing)
+            .map(|(_, m)| m.path.map_or(m.here(now), |p| p.to))
+            .filter(|o| dist2d(*o, me) <= SWING_REACH + 2.0)
+            .collect();
+        let base = (here[1] - me[1]).atan2(here[0] - me[0]);
+        for ring in 0..3 {
+            let r = MELEE_REACH * 0.6 + ring as f32 * 1.6;
+            // Spots a spread apart along this ring, nearest the bearing first.
+            let step = (SPREAD / r).min(1.0);
+            for k in 0..24 {
+                let off = ((k + 1) / 2) as f32 * step * if k % 2 == 0 { 1.0 } else { -1.0 };
+                let a = base + off;
+                let p = [me[0] + a.cos() * r, me[1] + a.sin() * r, me[2]];
+                if others.iter().all(|o| dist2d(*o, p) >= SPREAD) {
+                    return p;
+                }
+            }
+        }
+        let r = MELEE_REACH * 0.6;
+        [me[0] + base.cos() * r, me[1] + base.sin() * r, me[2]]
+    }
+
+    /// A world creature coming into view takes about the player's run level (one either side,
+    /// never under its own lowest), so the zone keeps up with a run. One already fighting, or
+    /// sent by the spawner, keeps its own.
+    fn level_to_player(&mut self, i: usize, now: Instant) {
+        let m = &self.mobs[i];
+        if m.spawned || m.state != MobState::Idle {
+            return;
+        }
+        let Some(t) = self.data.creatures.get(&m.entry) else { return };
+        let base = if self.in_run() { self.player.level } else { 1 };
+        let jitter = (self.rng.next() % 3) as u32;
+        let level = (base + jitter).saturating_sub(1).max(t.level.0);
+        if level == m.level {
+            return;
+        }
+        let fresh = Mob::new(t, level, m.guid, m.home, m.facing, now);
+        let m = &mut self.mobs[i];
+        m.level = level;
+        m.max_health = fresh.max_health;
+        m.health = fresh.max_health;
+        m.damage = fresh.damage;
     }
 
     /// The nearest living creature in the cone in front of the player, within range.
@@ -756,16 +818,13 @@ impl Game {
         let (lo, hi, speed) = self.player.weapon;
         self.player.next_swing = now + speed;
         let bonus = (self.player.level - 1) as f32 * DAMAGE_PER_LEVEL;
-        let roll = self.rng.unit();
-        let (swing, damage) = if roll < 0.05 {
-            (Swing::Miss, 0)
+        // No misses in the survivor: every swing lands, a tenth of them (more with crit gear)
+        // twice as hard.
+        let d = self.rng.range(lo + bonus, hi + bonus).round().max(1.0) as u32;
+        let (swing, damage) = if self.rng.unit() < 0.1 + self.gear(gear::GearStat::Crit) {
+            (Swing::Crit, d * 2)
         } else {
-            let d = self.rng.range(lo + bonus, hi + bonus).round().max(1.0) as u32;
-            if roll > 0.9 {
-                (Swing::Crit, d * 2)
-            } else {
-                (Swing::Hit, d)
-            }
+            (Swing::Hit, d)
         };
         let guid = self.mobs[target].guid;
         self.send(
@@ -949,16 +1008,14 @@ impl Game {
             return;
         }
         let d = dist2d(here, me);
-        if d > MELEE_REACH * 0.8 {
-            // Run to a point just short of the player, re-aimed when the player has moved off it.
-            let aim_off = m.path.is_none_or(|p| dist2d(p.to, me) > 1.5);
-            if aim_off {
-                let k = (d - MELEE_REACH * 0.6) / d;
-                let to = [
-                    here[0] + (me[0] - here[0]) * k,
-                    here[1] + (me[1] - here[1]) * k,
-                    me[2],
-                ];
+        let moving = m.path.is_some_and(|p| !p.done(now));
+        let aim_off = dist2d(m.aimed_at, me) > 1.5;
+        if d > SWING_REACH || (moving && aim_off) || (d > MELEE_REACH * 0.8 && m.path.is_none() && aim_off) {
+            // Run to a spot of its own round the player, re-aimed when the player moves off.
+            if aim_off || !moving {
+                let to = self.ring_spot(i, here, me, now);
+                let m = &mut self.mobs[i];
+                m.aimed_at = me;
                 let dur = Duration::from_secs_f32(dist2d(here, to) / m.run_speed);
                 m.pos = here;
                 m.path = Some(Path {
@@ -976,7 +1033,12 @@ impl Game {
             }
             return;
         }
+        // Still on its way to its spot: let it get there.
+        if moving {
+            return;
+        }
         // In reach: stop and swing.
+        let m = &mut self.mobs[i];
         if m.path.is_some() {
             m.pos = here;
             m.path = None;
@@ -994,12 +1056,8 @@ impl Game {
         }
         m.next_swing = now + m.attack;
         let (guid, lo, hi) = (m.guid, m.damage.0, m.damage.1);
-        let roll = self.rng.unit();
-        let (swing, damage) = if roll < 0.08 {
-            (Swing::Miss, 0)
-        } else {
-            (Swing::Hit, self.rng.range(lo, hi).round().max(1.0) as u32)
-        };
+        // Every blow lands: the survivor has no miss chance.
+        let (swing, damage) = (Swing::Hit, self.rng.range(lo, hi).round().max(1.0) as u32);
         self.send(
             opcode::SMSG_ATTACKERSTATEUPDATE,
             &packets::attacker_state(guid, self.player.guid, swing, damage),
