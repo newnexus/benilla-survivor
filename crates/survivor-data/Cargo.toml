@@ -14,3 +14,4 @@ anyhow.workspace = true
 benilla-adt = { path = "../benilla-adt" }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 rusqlite = { version = "0.32", features = ["bundled"] }
+survivor-server = { path = "../survivor-server" }

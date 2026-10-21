@@ -11,21 +11,19 @@ pub const UNDEAD_CLASSES: [u8; 5] = [1, 4, 5, 8, 9];
 /// Map 0 (Eastern Kingdoms), zone 85 (Tirisfall Glades): the Forsaken start in Deathknell.
 pub(crate) const START_MAP: u32 = 0;
 pub(crate) const START_ZONE: u32 = 85;
-/// Not in the crypt, as vmangos's `playercreateinfo` has it (1676.71, 1678.31, 121.67), but out
-/// in front of it: six yards past Undertaker Mordo at the crypt's door (1678.99, 1667.86),
-/// facing up the road to the village. The height is the door's, and the client settles the
-/// player onto the ground.
-const START_POS: [f32; 3] = [1684.9, 1666.85, 136.5];
-const START_FACING: f32 = 6.11;
+/// Not in the crypt, as vmangos's `playercreateinfo` has it (1676.71, 1678.31, 121.67), but in
+/// the safe village of Deathknell, where the quest givers stand ([`crate::town`]).
+const START_POS: [f32; 3] = crate::town::TOWNS[0].arrive;
+const START_FACING: f32 = crate::town::TOWNS[0].arrive_facing;
 
-/// Where a character enters the world: Deathknell's crypt, or `$SURVIVOR_START=x,y,z` for an
-/// unattended run that must stand somewhere in particular.
+/// Where a character enters the world: Deathknell's village, or `$SURVIVOR_START=x,y,z[,facing]`
+/// for an unattended run that must stand somewhere in particular.
 pub(crate) fn start() -> ([f32; 3], f32) {
     let parsed = std::env::var("SURVIVOR_START").ok().and_then(|v| {
         let c: Vec<f32> = v.split(',').filter_map(|p| p.trim().parse().ok()).collect();
-        (c.len() == 3).then(|| [c[0], c[1], c[2]])
+        (c.len() >= 3).then(|| ([c[0], c[1], c[2]], c.get(3).copied().unwrap_or(START_FACING)))
     });
-    (parsed.unwrap_or(START_POS), START_FACING)
+    parsed.unwrap_or((START_POS, START_FACING))
 }
 
 /// `SMSG_CHAR_CREATE` results (`ResponseCodes`, 1.12.1).

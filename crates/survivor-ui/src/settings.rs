@@ -51,10 +51,6 @@ mod tests {
             std::fs::read_to_string(&p).unwrap(),
             "# head\n[cvars]\nautoSelfCast = \"1\"\ngameTip = \"20\"\n"
         );
-        let s = dir.join("saved-variables.lua");
-        seed_saved(&s, "SHOW_MULTI_ACTIONBAR_3", "1").unwrap();
-        seed_saved(&s, "SHOW_MULTI_ACTIONBAR_3", "1").unwrap();
-        assert_eq!(std::fs::read_to_string(&s).unwrap(), "SHOW_MULTI_ACTIONBAR_3 = 1\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -33,7 +33,7 @@ fn main() -> benilla_app::AppExit {
         project_dir: env!("BENILLA_PROJECT_DIR"),
         ..Default::default()
     }, |app| {
-        // The survivor's own screens: the level-up pick.
-        app.add_plugins(survivor_ui::SurvivorUiPlugin);
+        // The survivor's own screens: the level-up pick. The camera swings in behind a runner.
+        app.add_plugins((survivor_ui::SurvivorUiPlugin, survivor_touch::SurvivorCameraPlugin));
     })
 }

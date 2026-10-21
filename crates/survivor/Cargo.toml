@@ -17,6 +17,7 @@ dev = ["benilla-app/dev"]
 benilla-app = { path = "../benilla-app", default-features = false }
 survivor-server = { path = "../survivor-server" }
 survivor-ui = { path = "../survivor-ui" }
+survivor-touch = { path = "../survivor-touch" }
 
 [build-dependencies]
 benilla-buildstamp = { path = "../benilla-buildstamp" }

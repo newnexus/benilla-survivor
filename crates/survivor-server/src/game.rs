@@ -16,7 +16,9 @@ use crate::wire::Sender;
 mod aura;
 mod meal;
 mod pick;
+mod quest;
 mod rotation;
+mod town;
 pub(crate) use meal::PackItem;
 
 /// Creatures keep this share of their 1.12 health.
@@ -210,6 +212,29 @@ pub(crate) struct Game {
     meals: Vec<meal::Meal>,
     /// What the action bars hold, by role ([`rotation`]).
     bars: rotation::Bars,
+    /// In a safe town or out on a run ([`town`]).
+    mode: town::Mode,
+    /// The lasting level shown in town.
+    meta: town::Meta,
+    /// The towns' people, and which of them the client has.
+    npcs: Vec<town::Npc>,
+    npcs_shown: HashSet<usize>,
+    /// The quest giver that spoke up last, quiet until the player walks off.
+    talked: Option<u64>,
+    quests: quest::QuestLog,
+    /// Copper.
+    money: u32,
+    /// What a run starts with: the class's first spells and its starting bar.
+    start_spells: Vec<u32>,
+    start_buttons: [u32; 120],
+    teleport_counter: u32,
+    /// The player has moved since the world entry: the client is past its loading screen, so a
+    /// quest giver's panel will be seen.
+    walked: bool,
+    /// The test switches' state is in (`$SURVIVOR_QUESTS`), done on the first tick.
+    seeded: bool,
+    /// The world entry, which the client's movement clock counts from.
+    started: Instant,
 }
 
 /// `SPELL_FAILED_*` reasons the client words.
@@ -333,6 +358,19 @@ impl Game {
             pack,
             meals: Vec::new(),
             bars: rotation::Bars::default(),
+            mode: town::mode_at(pos),
+            meta: town::Meta::default(),
+            npcs: town::npcs(&data, now),
+            npcs_shown: HashSet::new(),
+            talked: None,
+            quests: quest::QuestLog::default(),
+            money: 0,
+            start_spells: Vec::new(),
+            start_buttons: buttons,
+            teleport_counter: 0,
+            seeded: false,
+            walked: false,
+            started: now,
             player: Player {
                 guid: c.guid,
                 class: c.class,
@@ -367,6 +405,7 @@ impl Game {
             next_spline: 1,
             rng,
         };
+        game.start_spells = game.player.spells.clone();
         game.sort_start_bar(&buttons);
         game
     }
@@ -399,6 +438,7 @@ impl Game {
 
     /// The client moved its player.
     pub(crate) fn player_moved(&mut self, pos: [f32; 3], facing: f32) {
+        self.walked |= dist2d(pos, self.player.pos) > 0.1;
         self.player.pos = pos;
         self.player.facing = facing;
     }
@@ -410,18 +450,22 @@ impl Game {
         }
     }
 
-    pub(crate) fn creature_template(&self, entry: u32) -> Option<&crate::data::CreatureTemplate> {
-        self.data.creatures.get(&entry)
-    }
-
     pub(crate) fn tick(&mut self) {
+        if !self.seeded {
+            self.seeded = true;
+            self.seed_test_quests();
+        }
         self.take_pick_choice();
         if self.paused() {
             return;
         }
         let now = Instant::now();
         self.revive(now);
+        self.check_barrier(now);
         self.update_visibility(now);
+        self.walk_beats(now);
+        self.update_npcs(now);
+        self.talk_nearby(now);
         self.player_attack(now);
         self.tick_spells(now);
         self.tick_meals(now);
@@ -430,16 +474,15 @@ impl Game {
             self.mob_ai(i, now);
         }
         crate::aim::set(self.player.target);
+        crate::town::set_in_town(!self.in_run());
         self.open_pending_pick(now);
     }
 
     fn revive(&mut self, now: Instant) {
         if self.player.dead_until.is_some_and(|t| now >= t) {
             self.player.dead_until = None;
-            self.player.health = self.player.max_health;
-            let mut fl = Fields::default();
-            fl.set(f::HEALTH, self.player.health);
-            self.values(self.player.guid, fl);
+            // Up again, alive, in the nearest town: the run is over.
+            self.carry_to_town(now);
         }
     }
 
@@ -529,7 +572,7 @@ impl Game {
     }
 
     fn player_attack(&mut self, now: Instant) {
-        if self.player.dead_until.is_some() {
+        if self.player.dead_until.is_some() || !self.in_run() {
             return;
         }
         // Keep a living target; otherwise take the nearest foe in front.
@@ -610,22 +653,32 @@ impl Game {
     }
 
     fn kill(&mut self, i: usize, now: Instant) {
-        let (guid, level, respawn) = {
+        let (guid, level, here, was_moving) = {
             let m = &mut self.mobs[i];
             m.state = MobState::Dead {
                 despawn: now + CORPSE_TIME,
                 respawn: now + m.respawn,
             };
-            m.path = None;
-            (m.guid, m.level, m.respawn)
+            // The corpse stays where it fell: without a stop the client plays the rest of the
+            // run's spline and the body slides along the ground.
+            let here = m.here(now);
+            let was_moving = m.path.take().is_some();
+            m.pos = here;
+            (m.guid, m.level, here, was_moving)
         };
-        let _ = respawn;
+        if was_moving {
+            let id = self.spline_id();
+            self.send(opcode::SMSG_MONSTER_MOVE, &packets::monster_stop(guid, here, id));
+        }
         self.send(
             opcode::SMSG_ATTACKSTOP,
             &packets::attack_stop(self.player.guid, guid),
         );
         self.send(opcode::SMSG_ATTACKSTOP, &packets::attack_stop(guid, self.player.guid));
         self.player.target = None;
+        let entry = self.mobs[i].entry;
+        self.quest_kill(entry, guid);
+        self.grant_meta_xp(self.meta_kill_xp(level));
         let xp = kill_xp(level);
         eprintln!(
             "survivor: killed {} (level {level}) for {xp} xp",
@@ -666,7 +719,8 @@ impl Game {
 
     fn mob_ai(&mut self, i: usize, now: Instant) {
         let me = self.player.pos;
-        let player_alive = self.player.dead_until.is_none();
+        // In town the player is out of reach: nothing comes for them, and a chase breaks off.
+        let player_alive = self.player.dead_until.is_none() && self.mode == town::Mode::Run;
         let shown = self.visible.contains(&i);
         let m = &mut self.mobs[i];
         match m.state {
@@ -794,7 +848,9 @@ impl Game {
         self.values(self.player.guid, fl);
         if self.player.health == 0 {
             self.player.dead_until = Some(now + REVIVE_TIME);
-            self.player.target = None;
+            if let Some(t) = self.player.target.take() {
+                self.send(opcode::SMSG_ATTACKSTOP, &packets::attack_stop(self.player.guid, t));
+            }
             self.player.casting = None;
         }
     }
@@ -839,6 +895,10 @@ impl Game {
         }
         if s.power_type == self.player.power.kind && self.player.power.current < s.cost {
             return Some(fail::NO_POWER);
+        }
+        // In town nothing is fought: no spell at a creature, none around the caster.
+        if !self.in_run() && (Self::needs_target(s) || Self::is_area(s)) {
+            return Some(fail::BAD_TARGETS);
         }
         if Self::needs_target(s) {
             let Some(i) = target.and_then(|g| self.mob_index(g)) else {
@@ -1114,7 +1174,7 @@ impl Game {
             }
         }
 
-        if self.player.autocast && self.player.casting.is_none() && now >= self.player.gcd_until {
+        if self.player.autocast && self.in_run() && self.player.casting.is_none() && now >= self.player.gcd_until {
             if let Some(id) = self.rotation_pick(now) {
                 self.cast(id, self.player.target);
             }

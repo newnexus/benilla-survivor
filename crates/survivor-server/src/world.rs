@@ -27,7 +27,15 @@ const TICK: Duration = Duration::from_millis(100);
 /// The client's movement opcodes, `MSG_MOVE_START_FORWARD` through `MSG_MOVE_SET_PITCH`, plus
 /// the heartbeat: each body is a `MovementInfo` with the position at byte 8.
 fn is_move(op: u16) -> bool {
-    (0xB5..=0xDB).contains(&op) || op == 0xEE
+    // The teleport's ack sits in the range but carries no position at byte 8.
+    ((0xB5..=0xDB).contains(&op) && op != opcode::MSG_MOVE_TELEPORT_ACK) || op == 0xEE
+}
+
+/// `u64 guid, u32 quest` at the front of a questgiver message.
+fn guid_quest(body: &[u8]) -> Option<(u64, u32)> {
+    let guid = u64::from_le_bytes(body.get(..8)?.try_into().ok()?);
+    let quest = u32::from_le_bytes(body.get(8..12)?.try_into().ok()?);
+    Some((guid, quest))
 }
 
 pub(crate) fn serve(listener: TcpListener, keys: Receiver<Key>) {
@@ -202,6 +210,19 @@ fn session(
                     }
                 }
             }
+            opcode::CMSG_QUESTGIVER_STATUS_QUERY
+            | opcode::CMSG_QUESTGIVER_HELLO
+            | opcode::CMSG_QUESTGIVER_QUERY_QUEST
+            | opcode::CMSG_QUESTGIVER_ACCEPT_QUEST
+            | opcode::CMSG_QUESTGIVER_COMPLETE_QUEST
+            | opcode::CMSG_QUESTGIVER_REQUEST_REWARD
+            | opcode::CMSG_QUESTGIVER_CHOOSE_REWARD
+            | opcode::CMSG_QUEST_QUERY
+            | opcode::CMSG_QUESTLOG_REMOVE_QUEST => {
+                if let Some(g) = playing.lock().expect("game").as_mut() {
+                    quest_message(g, op, &body);
+                }
+            }
             opcode::CMSG_CREATURE_QUERY => {
                 let Some(e) = body.get(..4) else { continue };
                 let entry = u32::from_le_bytes(e.try_into().expect("four bytes"));
@@ -240,6 +261,42 @@ fn session(
                 in_world = None;
             }
             _ => {}
+        }
+    }
+}
+
+/// The quest frames' messages, to the game's quest givers.
+fn quest_message(g: &mut Game, op: u16, body: &[u8]) {
+    let guid = body.get(..8).map(|b| u64::from_le_bytes(b.try_into().expect("eight bytes")));
+    match op {
+        opcode::CMSG_QUESTGIVER_STATUS_QUERY => {
+            if let Some(guid) = guid {
+                g.quest_status_query(guid);
+            }
+        }
+        opcode::CMSG_QUESTGIVER_HELLO => {
+            if let Some(guid) = guid {
+                g.quest_hello(guid);
+            }
+        }
+        opcode::CMSG_QUEST_QUERY => {
+            if let Some(id) = body.get(..4) {
+                g.quest_query(u32::from_le_bytes(id.try_into().expect("four bytes")));
+            }
+        }
+        opcode::CMSG_QUESTLOG_REMOVE_QUEST => {
+            if let Some(&slot) = body.first() {
+                g.quest_abandon(slot);
+            }
+        }
+        _ => {
+            let Some((guid, id)) = guid_quest(body) else { return };
+            match op {
+                opcode::CMSG_QUESTGIVER_QUERY_QUEST => g.quest_query_quest(guid, id),
+                opcode::CMSG_QUESTGIVER_ACCEPT_QUEST => g.quest_accept(guid, id),
+                opcode::CMSG_QUESTGIVER_CHOOSE_REWARD => g.quest_turn_in(guid, id),
+                _ => g.quest_reward_panel(guid, id),
+            }
         }
     }
 }

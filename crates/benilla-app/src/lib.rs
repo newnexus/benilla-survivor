@@ -207,8 +207,13 @@ pub use benilla_protocol::{messages::ObjectType, ObjectFields};
 pub use net::Objects;
 pub use target::Interact;
 pub use target::SurvivorSelect; // survivor
-pub use player::SurvivorTouch; // survivor
+pub use player::{SurvivorCameraFollow, SurvivorTouch}; // survivor
 pub use survivor_frames::SurvivorFrames; // survivor
+
+/// survivor: a game mode whose level is reset (a run's start and end) announces only a rise:
+/// a drop fires no `PLAYER_LEVEL_UP`, so no "Congratulations, you have reached level 1!".
+pub static SURVIVOR_LEVEL_RISES_ONLY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Builds and runs the client app. `build` is the launcher's compile-time git stamp, passed in as
 /// data so the sha lives in the shim's fingerprint and a commit does not recompile this crate.

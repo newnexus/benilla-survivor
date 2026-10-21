@@ -60,7 +60,11 @@ fn main() {
             ..Default::default()
         },
         |app| {
-            app.add_plugins((survivor_ui::SurvivorUiPlugin, survivor_touch::SurvivorTouchPlugin));
+            app.add_plugins((
+                survivor_ui::SurvivorUiPlugin,
+                survivor_touch::SurvivorTouchPlugin,
+                survivor_touch::SurvivorCameraPlugin,
+            ));
         },
     );
 }

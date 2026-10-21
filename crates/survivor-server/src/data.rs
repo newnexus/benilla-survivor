@@ -25,6 +25,8 @@ pub(crate) struct CreatureTemplate {
     pub(crate) detection: f32,
     /// Attacks on sight; a neutral creature only fights back.
     pub(crate) hostile: bool,
+    /// `UNIT_NPC_FLAGS` of a town's people (gossip, quests, vendor...), 0 for a foe.
+    pub(crate) npc_flags: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +35,21 @@ pub(crate) struct Spawn {
     pub(crate) pos: [f32; 3],
     pub(crate) facing: f32,
     pub(crate) respawn_s: u32,
+}
+
+/// A town person's beat (`npcs.tsv`'s patrol and side): the path in [`WorldData::patrols`] they
+/// walk, and how far to its right.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Beat {
+    pub(crate) patrol: u32,
+    pub(crate) side: f32,
+}
+
+/// A patrol path's point and how long to stand there, ms.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PatrolPoint {
+    pub(crate) pos: [f32; 3],
+    pub(crate) wait_ms: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -96,6 +113,31 @@ pub(crate) struct SpellInfo {
     pub(crate) targets: [u32; 3],
 }
 
+/// `UNIT_NPC_FLAG_QUESTGIVER`.
+pub(crate) const NPC_QUESTGIVER: u32 = 0x2;
+
+/// A kill quest a town's quest giver offers (`quests.tsv`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Quest {
+    pub(crate) id: u32,
+    pub(crate) level: u32,
+    pub(crate) min_level: u32,
+    /// The quest that must be turned in first, 0 for none.
+    pub(crate) prev: u32,
+    pub(crate) giver: u32,
+    pub(crate) ender: u32,
+    pub(crate) xp: u32,
+    pub(crate) money: u32,
+    pub(crate) title: String,
+    pub(crate) details: String,
+    pub(crate) objectives: String,
+    pub(crate) offer_text: String,
+    pub(crate) end_text: String,
+    /// Up to four `(creature entry, count)` kills, `(0, 0)` where unused.
+    pub(crate) kills: [(u32, u32); 4],
+    pub(crate) objective_texts: [String; 4],
+}
+
 /// A class's trainer spell with its rank chain.
 #[derive(Clone, Debug)]
 pub(crate) struct ClassSpell {
@@ -111,6 +153,11 @@ pub(crate) struct ClassSpell {
 pub(crate) struct WorldData {
     pub(crate) creatures: HashMap<u32, CreatureTemplate>,
     pub(crate) spawns: Vec<Spawn>,
+    /// The safe towns' people.
+    pub(crate) npcs: Vec<(Spawn, Beat)>,
+    /// Patrol paths by id, their points in order.
+    pub(crate) patrols: HashMap<u32, Vec<PatrolPoint>>,
+    pub(crate) quests: Vec<Quest>,
     pub(crate) items: HashMap<u32, ItemTemplate>,
     /// `(class, item, amount)`.
     pub(crate) start_items: Vec<(u8, u32, u32)>,
@@ -195,6 +242,7 @@ impl WorldData {
                 damage: pair(r.get(13)),
                 detection: num(r.get(14)),
                 hostile: num::<u8>(r.get(15)) != 0,
+                npc_flags: num(r.get(16)),
             };
             d.creatures.insert(t.entry, t);
         }
@@ -208,6 +256,50 @@ impl WorldData {
                 pos: [num(r.get(2)), num(r.get(3)), num(r.get(4))],
                 facing: num(r.get(5)),
                 respawn_s: num(r.get(6)),
+            });
+        }
+        for r in rows(&dir, "npcs.tsv") {
+            let entry = num(r.get(1));
+            if !d.creatures.contains_key(&entry) {
+                continue;
+            }
+            d.npcs.push((
+                Spawn {
+                    entry,
+                    pos: [num(r.get(2)), num(r.get(3)), num(r.get(4))],
+                    facing: num(r.get(5)),
+                    respawn_s: 0,
+                },
+                Beat {
+                    patrol: num(r.get(6)),
+                    side: num(r.get(7)),
+                },
+            ));
+        }
+        for r in rows(&dir, "patrols.tsv") {
+            d.patrols.entry(num(r.first())).or_default().push(PatrolPoint {
+                pos: [num(r.get(2)), num(r.get(3)), num(r.get(4))],
+                wait_ms: num(r.get(5)),
+            });
+        }
+        for r in rows(&dir, "quests.tsv") {
+            let text = |i: usize| r.get(i).cloned().unwrap_or_default();
+            d.quests.push(Quest {
+                id: num(r.first()),
+                level: num(r.get(1)),
+                min_level: num(r.get(2)),
+                prev: num(r.get(3)),
+                giver: num(r.get(4)),
+                ender: num(r.get(5)),
+                xp: num(r.get(6)),
+                money: num(r.get(7)),
+                title: text(8),
+                details: text(9),
+                objectives: text(10),
+                offer_text: text(11),
+                end_text: text(12),
+                kills: std::array::from_fn(|k| pair(r.get(13 + k))),
+                objective_texts: std::array::from_fn(|k| text(17 + k)),
             });
         }
         for r in rows(&dir, "items.tsv") {
@@ -285,10 +377,20 @@ impl WorldData {
                 num(r.get(3)),
             ));
         }
+        // A town's people offer only what the server answers: the quest givers keep their mark
+        // (`UNIT_NPC_FLAG_QUESTGIVER`), vendors and trainers stay plain townsfolk for now.
+        let talks: std::collections::HashSet<u32> =
+            d.quests.iter().flat_map(|q| [q.giver, q.ender]).collect();
+        for t in d.creatures.values_mut() {
+            t.npc_flags = if talks.contains(&t.entry) { NPC_QUESTGIVER } else { 0 };
+        }
         eprintln!(
-            "survivor-server: {} spawns of {} creature kinds, {} items, {} spells, from {}",
+            "survivor-server: {} spawns of {} creature kinds, {} town people, {} quests, {} items, \
+             {} spells, from {}",
             d.spawns.len(),
             d.creatures.len(),
+            d.npcs.len(),
+            d.quests.len(),
             d.items.len(),
             d.spells.len(),
             dir.display()
@@ -377,6 +479,7 @@ mod tests {
                 damage: (2.0, 3.0),
                 detection: 10.0,
                 hostile: true,
+                npc_flags: 0,
             },
         );
         for _ in 0..1500 {

@@ -1623,7 +1623,10 @@ fn feed_units(
         if let Some((store, _)) = self_q.iter().next() {
             if let Some(level) = store.0.unit_level() {
                 let prev = memo.last_level.replace(level);
-                if prev.is_some_and(|p| level != p) {
+                // survivor: a drop is a reset when the game mode says so.
+                let rises_only =
+                    crate::SURVIVOR_LEVEL_RISES_ONLY.load(std::sync::atomic::Ordering::Relaxed);
+                if prev.is_some_and(|p| level != p && !(rises_only && level < p)) {
                     gate.audit("feed_units", "the level edge");
                     // All nine, as the reference formats them (`%d` nine times) and
                     // `ChatFrame.lua:1283-1320` reads them; missing gains are zeros, since stock's

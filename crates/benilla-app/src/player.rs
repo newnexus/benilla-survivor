@@ -65,7 +65,7 @@ mod state;
 pub(crate) mod step_probe;
 mod swim;
 mod survivor_touch; // survivor
-pub use survivor_touch::SurvivorTouch; // survivor
+pub use survivor_touch::{SurvivorCameraFollow, SurvivorTouch}; // survivor
 mod view_subject;
 mod walk;
 mod wire_in;
@@ -384,9 +384,12 @@ impl Plugin for PlayerPlugin {
         )
         // survivor: touch steering, after the two above so a thumb wins over them.
         .init_resource::<SurvivorTouch>()
+        .init_resource::<SurvivorCameraFollow>()
         .add_systems(
             Update,
-            survivor_touch::steer_touch
+            // survivor: the camera chase reads the look drag `steer_touch` spends this frame.
+            (survivor_touch::steer_touch, survivor_touch::chase_camera)
+                .chain()
                 .in_set(WorldStage::Input)
                 .after(approach::steer_approach)
                 .before(control)

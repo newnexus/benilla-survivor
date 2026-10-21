@@ -51,3 +51,60 @@ pub(super) fn steer_touch(
     player.face_yaw = from + (-dir.x).atan2(-dir.y);
     player.auto_forward = true;
 }
+
+/// survivor: the camera swinging in behind a running character by itself, so a turn made with
+/// the move thumb (or the keys) is eventually followed without a look drag. Off unless a crate
+/// on top of benilla turns it on; the stock follow style ([`super::camera::FollowConfig`]) only
+/// arms a return on an input edge, where this chases every frame the character moves.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct SurvivorCameraFollow {
+    pub enabled: bool,
+    /// Seconds after the last look drag (mouse or thumb) before the chase resumes.
+    pub grace: f32,
+    /// The exponential approach's time constant, seconds: the gap left after `t` is `e^(-t/τ)`.
+    pub time_constant: f32,
+}
+
+impl Default for SurvivorCameraFollow {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            grace: 0.6,
+            time_constant: 1.2,
+        }
+    }
+}
+
+/// Ease the camera's yaw toward the character's facing (directly behind it) while the
+/// character moves and no look drag has run for [`SurvivorCameraFollow::grace`] seconds.
+pub(super) fn chase_camera(
+    cfg: Res<SurvivorCameraFollow>,
+    touch: Res<SurvivorTouch>,
+    rig: Res<super::camera::CameraControl>,
+    player: Res<Player>,
+    time: Res<Time>,
+    mut cams: Query<&mut FlyCam>,
+    // Seconds since the last look drag.
+    mut quiet: Local<f32>,
+) {
+    if !cfg.enabled {
+        return;
+    }
+    let dt = time.delta_secs();
+    if rig.look.is_some() || touch.look != Vec2::ZERO {
+        *quiet = 0.0;
+        return;
+    }
+    *quiet += dt;
+    let moving = player.auto_forward || player.autorun || player.horiz_vel.length_squared() > 0.25;
+    if *quiet < cfg.grace || !moving || player.control_lost {
+        return;
+    }
+    let Ok(mut cam) = cams.single_mut() else {
+        return;
+    };
+    // The shortest way round; the offset 0 is directly behind (`FollowInput::face_yaw`).
+    let gap = super::follow::wrap_pi(player.face_yaw - cam.yaw);
+    let k = 1.0 - (-dt / cfg.time_constant.max(0.01)).exp();
+    cam.yaw = super::follow::wrap_pi(cam.yaw + gap * k);
+}

@@ -6,8 +6,11 @@
 //! - `spawns.tsv`: where each of them stands;
 //! - `start_items.tsv` and `items.tsv`: each Forsaken class's starting gear.
 //!
-//! Friendly creatures (the Forsaken's own) and anything with a service (vendors, trainers,
-//! quest givers) are left out: the survivor-like has no faction NPCs yet.
+//! - `npcs.tsv`: the friendly people of the safe towns (`survivor_server::town`), quest givers
+//!   among them; `quests.tsv`: their kill quests.
+//!
+//! Friendly creatures and anything with a service outside the towns are left out, and so is
+//! every foe inside one.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -258,6 +261,207 @@ fn export_spells(
     Ok(count)
 }
 
+/// The towns' guards that walk a beat: vmangos's own patrols of Deathguard Oliver and Deathguard
+/// Phillip through Deathknell (`creature_movement_template`). Each gets a Deathguard Elite at
+/// their side.
+const PATROLLERS: [i64; 2] = [1737, 1739];
+/// The guard every post and patrol partner is.
+const DEATHGUARD_ELITE: i64 = 7980;
+/// How far outside the barrier the entrance guards stand, and from the road's middle.
+const POST_OUT: f32 = 3.5;
+const POST_ACROSS: [f32; 2] = [4.5, 8.0];
+/// A patrol partner walks this far to the right of the path.
+const PARTNER_SIDE: f32 = 2.2;
+
+/// The guards the towns add: four at every road into a town ([`survivor_server::town::Town`]'s
+/// `entrances`), two each side, facing out; and a partner for every patroller, whose path goes
+/// to `patrols.tsv`. Heights come from the map tiles. Guids count down from the top of the
+/// range, clear of vmangos's.
+fn add_guards(
+    conn: &Connection,
+    chain: &benilla_formats::Chain,
+    out: &Path,
+    npcs: &mut String,
+) -> Result<usize> {
+    let mut ground = Heights::default();
+    let mut guid = 9_999_999i64;
+    let mut count = 0;
+    for town in survivor_server::town::TOWNS {
+        for &a in town.entrances {
+            let (sin, cos) = a.sin_cos();
+            let r = town.radius + POST_OUT;
+            for across in POST_ACROSS {
+                for side in [-1.0f32, 1.0] {
+                    let x = town.centre[0] + cos * r - sin * across * side;
+                    let y = town.centre[1] + sin * r + cos * across * side;
+                    let z = ground.at(chain, x, y).unwrap_or(town.ground);
+                    writeln!(npcs, "{guid}\t{DEATHGUARD_ELITE}\t{x:.2}\t{y:.2}\t{z:.2}\t{a:.3}\t0\t0")?;
+                    guid -= 1;
+                    count += 1;
+                }
+            }
+        }
+    }
+    let mut patrols = String::from("patrol\tpoint\tx\ty\tz\twait_ms\n");
+    let mut stmt = conn.prepare(
+        "SELECT point, position_x, position_y, position_z, waittime
+         FROM creature_movement_template WHERE entry = ?1 ORDER BY point",
+    )?;
+    for entry in PATROLLERS {
+        let points: Vec<(i64, f64, f64, f64, i64)> = stmt
+            .query_map([entry], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+            .collect::<Result<_, _>>()?;
+        let Some(&(_, x, y, z, _)) = points.first() else { continue };
+        for (point, x, y, z, wait) in &points {
+            writeln!(patrols, "{entry}\t{point}\t{x:.2}\t{y:.2}\t{z:.2}\t{wait}")?;
+        }
+        writeln!(npcs, "{guid}\t{DEATHGUARD_ELITE}\t{x:.2}\t{y:.2}\t{z:.2}\t0\t{entry}\t{PARTNER_SIDE}")?;
+        guid -= 1;
+        count += 1;
+    }
+    std::fs::write(out.join("patrols.tsv"), patrols)?;
+    Ok(count)
+}
+
+/// Terrain heights from the Eastern Kingdoms' map tiles (`MCVT`), read as asked.
+#[derive(Default)]
+struct Heights {
+    tiles: std::collections::HashMap<(i32, i32), Option<Vec<benilla_adt::McnkChunk>>>,
+}
+
+impl Heights {
+    /// The ground at `(x, y)`, blended across the outer height grid's cell.
+    fn at(&mut self, chain: &benilla_formats::Chain, x: f32, y: f32) -> Option<f32> {
+        let (col, row) = (
+            (32.0 - y / TILE).floor() as i32,
+            (32.0 - x / TILE).floor() as i32,
+        );
+        let chunks = self.tiles.entry((col, row)).or_insert_with(|| {
+            let bytes = chain
+                .read(&format!("World\\Maps\\Azeroth\\Azeroth_{col}_{row}.adt"))
+                .ok()?;
+            let benilla_adt::ParsedAdt::Root(adt) =
+                benilla_adt::parse_adt(&mut std::io::Cursor::new(&bytes[..])).ok()?;
+            Some(adt.mcnk_chunks)
+        });
+        let c = chunks.as_ref()?.iter().find(|c| {
+            let p = c.header.position;
+            x <= p[0] && x > p[0] - CHUNK && y <= p[1] && y > p[1] - CHUNK
+        })?;
+        let h = &c.heights.as_ref()?.heights;
+        let p = c.header.position;
+        let unit = CHUNK / 8.0;
+        let (fi, fj) = ((p[0] - x) / unit, (p[1] - y) / unit);
+        let (i, j) = ((fi.floor() as usize).min(7), (fj.floor() as usize).min(7));
+        let (ti, tj) = (fi - i as f32, fj - j as f32);
+        // Outer vertex (i, j) is row i of 17 (nine outer, eight inner), column j.
+        let at = |i: usize, j: usize| h.get(i * 17 + j).copied();
+        let top = at(i, j)? * (1.0 - tj) + at(i, j + 1)? * tj;
+        let bottom = at(i + 1, j)? * (1.0 - tj) + at(i + 1, j + 1)? * tj;
+        Some(p[2] + top * (1.0 - ti) + bottom * ti)
+    }
+}
+
+/// `quests.tsv`: the kill-only quests the towns' people give, for the Forsaken, of a level the
+/// zone's creatures suit, whose every target is spawned. A prerequisite outside the set is
+/// dropped, so a chain starts wherever its first kill quest is. Text keeps WoW's `$B` breaks.
+fn export_quests(
+    conn: &Connection,
+    out: &Path,
+    givers: &std::collections::BTreeSet<i64>,
+    spawned: &std::collections::BTreeSet<i64>,
+) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT q.entry, q.QuestLevel, q.MinLevel, q.PrevQuestId, q.RewXP, q.RewOrReqMoney,
+                q.Title, q.Details, q.Objectives, q.OfferRewardText, q.EndText,
+                q.ReqCreatureOrGOId1, q.ReqCreatureOrGOId2, q.ReqCreatureOrGOId3,
+                q.ReqCreatureOrGOId4, q.ReqCreatureOrGOCount1, q.ReqCreatureOrGOCount2,
+                q.ReqCreatureOrGOCount3, q.ReqCreatureOrGOCount4, q.ObjectiveText1,
+                q.ObjectiveText2, q.ObjectiveText3, q.ObjectiveText4, q.RequiredRaces,
+                q.ReqItemId1, q.ReqItemId2, q.ReqItemId3, q.ReqItemId4, q.RequiredClasses, r.id,
+                (SELECT e.id FROM creature_involvedrelation e
+                  WHERE e.quest = q.entry AND e.patch_min <= ?1 AND e.patch_max >= ?1 LIMIT 1)
+         FROM quest_template q JOIN creature_questrelation r ON r.quest = q.entry
+         WHERE r.patch_min <= ?1 AND r.patch_max >= ?1
+           AND q.patch = (SELECT MAX(patch) FROM quest_template u
+                          WHERE u.entry = q.entry AND u.patch <= ?1)
+         ORDER BY q.QuestLevel, q.entry",
+    )?;
+    struct Row {
+        id: i64,
+        cols: Vec<String>,
+        prev: i64,
+    }
+    let text = |v: Option<String>| {
+        v.unwrap_or_default()
+            .replace("\r\n", "$B")
+            .replace(['\n', '\r'], "$B")
+            .replace('\t', " ")
+    };
+    let mut kept: Vec<Row> = Vec::new();
+    let mut rows = stmt.query([PATCH])?;
+    while let Some(r) = rows.next()? {
+        let id: i64 = r.get(0)?;
+        let level: i64 = r.get(1)?;
+        let races: i64 = r.get(23)?;
+        let items: [i64; 4] = [r.get(24)?, r.get(25)?, r.get(26)?, r.get(27)?];
+        let classes: i64 = r.get(28)?;
+        let giver: i64 = r.get(29)?;
+        let targets: [i64; 4] = [r.get(11)?, r.get(12)?, r.get(13)?, r.get(14)?];
+        let counts: [i64; 4] = [r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?];
+        let kill_only = items.iter().all(|&i| i == 0) && targets[0] > 0;
+        let all_spawned = targets.iter().all(|&t| t == 0 || spawned.contains(&t));
+        let for_us = (races == 0 || races & (1 << (UNDEAD - 1)) != 0) && classes == 0;
+        if !givers.contains(&giver)
+            || !kill_only
+            || !all_spawned
+            || !for_us
+            || level > MAX_LEVEL
+            || kept.iter().any(|k| k.id == id)
+        {
+            continue;
+        }
+        let ender: Option<i64> = r.get(30)?;
+        let ender = ender.filter(|e| givers.contains(e)).unwrap_or(giver);
+        let mut cols = vec![
+            id.to_string(),
+            level.to_string(),
+            r.get::<_, i64>(2)?.to_string(),
+            String::new(), // the prerequisite, settled below
+            giver.to_string(),
+            ender.to_string(),
+            r.get::<_, i64>(4)?.to_string(),
+            r.get::<_, i64>(5)?.max(0).to_string(),
+        ];
+        for c in 6..=10 {
+            cols.push(text(r.get(c)?));
+        }
+        for k in 0..4 {
+            cols.push(format!("{},{}", targets[k].max(0), counts[k].max(0)));
+        }
+        for c in 19..=22 {
+            cols.push(text(r.get(c)?));
+        }
+        kept.push(Row {
+            id,
+            cols,
+            prev: r.get(3)?,
+        });
+    }
+    let ids: std::collections::BTreeSet<i64> = kept.iter().map(|k| k.id).collect();
+    let mut tsv = String::from(
+        "id\tlevel\tmin_level\tprev\tgiver\tender\txp\tmoney\ttitle\tdetails\tobjectives\t\
+         offer_text\tend_text\tkill1\tkill2\tkill3\tkill4\tobjective1\tobjective2\tobjective3\t\
+         objective4\n",
+    );
+    for mut k in kept {
+        k.cols[3] = if ids.contains(&k.prev) { k.prev } else { 0 }.to_string();
+        writeln!(tsv, "{}", k.cols.join("\t"))?;
+    }
+    std::fs::write(out.join("quests.tsv"), tsv)?;
+    Ok(ids.len())
+}
+
 /// The `AreaTable` id the terrain names under a world position, tile by tile as asked.
 #[derive(Default)]
 struct ZoneLookup {
@@ -403,6 +607,8 @@ fn main() -> Result<()> {
     )?;
     let mut spawns = String::from("guid\tentry\tx\ty\tz\to\trespawn_s\twander\n");
     let mut used = std::collections::BTreeSet::new();
+    let mut npcs = String::from("guid\tentry\tx\ty\tz\to\tpatrol\tside\n");
+    let mut npcs_used = std::collections::BTreeSet::new();
     let mut hostile = std::collections::BTreeSet::new();
     let (mut kept, mut dropped) = (0, 0);
     let rows = stmt.query_map(
@@ -445,6 +651,17 @@ fn main() -> Result<()> {
             .template(t.faction as u32)
             .map(|f| f.reaction_toward(player));
         let foe = matches!(reaction, Some(Reaction::Hostile | Reaction::Neutral));
+        // A town keeps its own people (the quest givers among them) and no foe.
+        let in_town = survivor_server::town::town_at([x as f32, y as f32, z as f32]).is_some();
+        if in_town {
+            if !foe && t.kind != CRITTER && t.display != 0 {
+                npcs_used.insert(entry);
+                let patrol = if PATROLLERS.contains(&entry) { entry } else { 0 };
+                writeln!(npcs, "{guid}\t{entry}\t{x:.2}\t{y:.2}\t{z:.2}\t{o:.3}\t{patrol}\t0")?;
+            }
+            dropped += 1;
+            continue;
+        }
         if !foe
             || t.npc_flags != 0
             || t.kind == CRITTER
@@ -465,12 +682,17 @@ fn main() -> Result<()> {
         )?;
     }
     std::fs::write(out.join("spawns.tsv"), spawns)?;
+    if add_guards(&conn, &chain, out, &mut npcs)? > 0 {
+        npcs_used.insert(DEATHGUARD_ELITE);
+    }
+    std::fs::write(out.join("npcs.tsv"), &npcs)?;
+    let quests = export_quests(&conn, out, &npcs_used, &used)?;
 
     let mut creatures = String::from(
         "entry\tname\tlevel_min\tlevel_max\tfaction\tdisplay\tscale\twalk\trun\trank\ttype\t\
-         attack_ms\thealth_per_level\tdamage_per_level\tdetection\thostile\n",
+         attack_ms\thealth_per_level\tdamage_per_level\tdetection\thostile\tnpc_flags\n",
     );
-    for entry in &used {
+    for entry in used.iter().chain(&npcs_used) {
         let t = &templates[entry];
         // Health and damage at the template's lowest and highest level, `min,max`.
         let at = |level: i64| class_stats.get(&(t.unit_class.max(1), level)).copied();
@@ -479,7 +701,7 @@ fn main() -> Result<()> {
         let damage = |s: Option<(f64, f64)>| s.map_or(1.0, |s| s.1 * t.damage_mult);
         writeln!(
             creatures,
-            "{entry}\t{}\t{}\t{}\t{}\t{}\t{:.2}\t{:.2}\t{:.2}\t{}\t{}\t{}\t{},{}\t{:.1},{:.1}\t{:.0}\t{}",
+            "{entry}\t{}\t{}\t{}\t{}\t{}\t{:.2}\t{:.2}\t{:.2}\t{}\t{}\t{}\t{},{}\t{:.1},{:.1}\t{:.0}\t{}\t{}",
             t.name,
             t.levels.0,
             t.levels.1,
@@ -497,6 +719,7 @@ fn main() -> Result<()> {
             damage(hi),
             t.detection,
             u8::from(hostile.contains(entry)),
+            t.npc_flags,
         )?;
     }
     std::fs::write(out.join("creatures.tsv"), creatures)?;
@@ -558,6 +781,11 @@ fn main() -> Result<()> {
     println!(
         "survivor-data: {spells} class spells and ranks -> {}",
         out.display()
+    );
+    println!(
+        "survivor-data: {} town NPCs of {} kinds, {quests} kill quests",
+        npcs.lines().count() - 1,
+        npcs_used.len()
     );
     println!(
         "survivor-data: {kept} spawns kept ({outside} outside the zone, {dropped} friendly, \

@@ -32,6 +32,7 @@ pub(crate) mod f {
     pub const MINDAMAGE: u16 = 134;
     pub const MAXDAMAGE: u16 = 135;
     pub const MOD_CAST_SPEED: u16 = 145;
+    pub const NPC_FLAGS: u16 = 147;
     pub const STAT0: u16 = 150;
     pub const BASE_HEALTH: u16 = 163;
     pub const PLAYER_BYTES: u16 = 193;
@@ -41,7 +42,10 @@ pub(crate) mod f {
     pub const PLAYER_VISIBLE_ITEM_STRIDE: u16 = 12;
     pub const PLAYER_INV_SLOT_HEAD: u16 = 486;
     pub const PLAYER_PACK_SLOT_1: u16 = 532;
+    /// Twenty slots of `[quest id, counters | state << 24, timer]`.
+    pub const PLAYER_QUEST_LOG_1_1: u16 = 198;
     pub const PLAYER_XP: u16 = 716;
+    pub const PLAYER_COINAGE: u16 = 1176;
     /// Byte 2: the extra action bars shown (`GetActionBarToggles`).
     pub const PLAYER_FIELD_BYTES: u16 = 1222;
     pub const PLAYER_NEXT_LEVEL_XP: u16 = 717;
@@ -213,7 +217,8 @@ pub(crate) fn creature_create(
         .set(f::NATIVEDISPLAYID, t.display)
         .setf(f::MINDAMAGE, t.damage.0)
         .setf(f::MAXDAMAGE, t.damage.1)
-        .setf(f::MOD_CAST_SPEED, 1.0);
+        .setf(f::MOD_CAST_SPEED, 1.0)
+        .set(f::NPC_FLAGS, t.npc_flags);
     let mut speeds = STOCK_SPEEDS;
     speeds[0] *= t.speed.0.max(0.1);
     speeds[1] *= t.speed.1.max(0.1);
@@ -346,6 +351,28 @@ pub(crate) fn monster_move(
     dest: [f32; 3],
     duration_ms: u32,
 ) -> Vec<u8> {
+    monster_move_as(guid, start, spline_id, dest, duration_ms, true)
+}
+
+/// `SMSG_MONSTER_MOVE` walking: a guard on its beat.
+pub(crate) fn monster_walk(
+    guid: u64,
+    start: [f32; 3],
+    spline_id: u32,
+    dest: [f32; 3],
+    duration_ms: u32,
+) -> Vec<u8> {
+    monster_move_as(guid, start, spline_id, dest, duration_ms, false)
+}
+
+fn monster_move_as(
+    guid: u64,
+    start: [f32; 3],
+    spline_id: u32,
+    dest: [f32; 3],
+    duration_ms: u32,
+    run: bool,
+) -> Vec<u8> {
     let mut b = Body::new();
     b.packed_guid(guid);
     for v in start {
@@ -353,7 +380,7 @@ pub(crate) fn monster_move(
     }
     b.u32(spline_id)
         .u8(0) // normal facing
-        .u32(0x100) // run mode
+        .u32(if run { 0x100 } else { 0 }) // run mode, else walking
         .u32(duration_ms.max(1))
         .u32(1);
     for v in dest {
@@ -555,6 +582,143 @@ pub(crate) fn move_root(guid: u64, counter: u32) -> Vec<u8> {
     b.0
 }
 
+/// `MSG_MOVE_TELEPORT_ACK` to our own player: the packed guid, the counter its ack echoes, and a
+/// standing `MovementInfo` at the destination.
+pub(crate) fn teleport(guid: u64, counter: u32, pos: [f32; 3], facing: f32, time_ms: u32) -> Vec<u8> {
+    let mut b = Body::new();
+    b.packed_guid(guid).u32(counter).u32(0).u32(time_ms);
+    for v in pos {
+        b.f32(v);
+    }
+    b.f32(facing).u32(0); // fall time
+    b.0
+}
+
+/// `SMSG_REMOVED_SPELL`: the spell id as a `u16`.
+pub(crate) fn removed_spell(spell: u32) -> Vec<u8> {
+    (spell as u16).to_le_bytes().to_vec()
+}
+
+/// `SMSG_NOTIFICATION`: a line of yellow text mid-screen.
+pub(crate) fn notification(text: &str) -> Vec<u8> {
+    let mut b = Body::new();
+    b.cstr(text);
+    b.0
+}
+
+/// Quest panels and the quest log (vmangos `Quest.cpp`, as benilla-protocol `quest` parses).
+pub(crate) mod quest {
+    use super::Body;
+    use crate::data::Quest;
+
+    /// `DIALOG_STATUS_*`: the mark over a quest giver's head.
+    pub const STATUS_NONE: u32 = 0;
+    pub const STATUS_INCOMPLETE: u32 = 3;
+    pub const STATUS_AVAILABLE: u32 = 5;
+    pub const STATUS_REWARD: u32 = 7;
+
+    pub(crate) fn status(npc: u64, status: u32) -> Vec<u8> {
+        let mut b = Body::new();
+        b.u64(npc).u32(status);
+        b.0
+    }
+
+    /// The greeting panel: one row per quest, `(quest, icon)`.
+    pub(crate) fn list(npc: u64, greeting: &str, rows: &[(&Quest, u32)]) -> Vec<u8> {
+        let mut b = Body::new();
+        b.u64(npc).cstr(greeting).u32(0).u32(0).u8(rows.len() as u8);
+        for (q, icon) in rows {
+            b.u32(q.id).u32(*icon).u32(q.level).cstr(&q.title);
+        }
+        b.0
+    }
+
+    /// The accept panel.
+    pub(crate) fn details(npc: u64, q: &Quest) -> Vec<u8> {
+        let mut b = Body::new();
+        b.u64(npc)
+            .u32(q.id)
+            .cstr(&q.title)
+            .cstr(&q.details)
+            .cstr(&q.objectives)
+            .u32(0) // auto-finish
+            .u32(0) // choice items
+            .u32(0) // reward items
+            .u32(q.money)
+            .u32(0) // reward spell
+            .u32(4);
+        for _ in 0..4 {
+            b.u32(0).u32(0); // emote, delay
+        }
+        b.0
+    }
+
+    /// The reward panel of a finished quest.
+    pub(crate) fn offer_reward(npc: u64, q: &Quest) -> Vec<u8> {
+        let mut b = Body::new();
+        b.u64(npc)
+            .u32(q.id)
+            .cstr(&q.title)
+            .cstr(&q.offer_text)
+            .u32(0) // auto-finish
+            .u32(0) // emotes
+            .u32(0) // choice items
+            .u32(0) // reward items
+            .u32(q.money)
+            .u32(0) // quest flags
+            .u32(0); // reward spell
+        b.0
+    }
+
+    /// The turn-in: XP and money granted, no items.
+    pub(crate) fn complete(q: &Quest, xp: u32) -> Vec<u8> {
+        let mut b = Body::new();
+        b.u32(q.id).u32(3).u32(xp).u32(q.money).u32(0);
+        b.0
+    }
+
+    /// `SMSG_QUEST_QUERY_RESPONSE`: the template the quest log shows.
+    pub(crate) fn query_response(q: &Quest) -> Vec<u8> {
+        let mut b = Body::new();
+        b.u32(q.id)
+            .u32(2) // method: normal
+            .u32(q.level)
+            .u32(crate::roster::START_ZONE)
+            .u32(0); // type
+        for _ in 0..4 {
+            b.u32(0); // reputation objective, opposite reputation
+        }
+        b.u32(0) // next in chain
+            .u32(q.money)
+            .u32(0) // money at max level
+            .u32(0) // reward spell
+            .u32(0) // source item
+            .u32(0); // flags
+        for _ in 0..(4 + 6) {
+            b.u32(0).u32(0); // reward and choice items
+        }
+        b.u32(0).f32(0.0).f32(0.0).u32(0); // point of interest
+        b.cstr(&q.title)
+            .cstr(&q.objectives)
+            .cstr(&q.details)
+            .cstr(&q.end_text);
+        for &(creature, count) in &q.kills {
+            b.u32(creature).u32(count).u32(0).u32(0);
+        }
+        for t in &q.objective_texts {
+            b.cstr(t);
+        }
+        b.0
+    }
+
+    /// `SMSG_QUESTUPDATE_ADD_KILL`: the toast line "Mindless Zombie slain: 3/8".
+    pub(crate) fn add_kill(quest: u32, entry: u32, count: u32, required: u32, guid: u64) -> Vec<u8> {
+        let mut b = Body::new();
+        b.u32(quest).u32(entry).u32(count).u32(required).u64(guid);
+        b.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,6 +740,7 @@ mod tests {
             damage: (1.6, 2.3),
             detection: 10.0,
             hostile: true,
+            npc_flags: 0,
         }
     }
 
@@ -642,5 +807,33 @@ mod tests {
         whole(opcode::SMSG_CAST_RESULT, &cast_result(133, Some(0x4D)));
         whole(opcode::SMSG_SPELLNONMELEEDAMAGELOG, &spell_damage(v, a, 133, 14, 2, false));
         let _ = parse_server; // the plain parser is the same path
+    }
+
+    #[test]
+    fn quest_and_teleport_packets_parse() {
+        use crate::data::Quest;
+        let npc = 0xF130_0000_0000_0000 | (1569 << 24) | 1;
+        let q = Quest {
+            id: 364,
+            level: 2,
+            title: "The Mindless Ones".into(),
+            details: "Go.$B$BNow.".into(),
+            kills: [(1501, 8), (1502, 8), (0, 0), (0, 0)],
+            ..Default::default()
+        };
+        whole(opcode::SMSG_QUESTGIVER_STATUS, &quest::status(npc, quest::STATUS_AVAILABLE));
+        whole(
+            opcode::SMSG_QUESTGIVER_QUEST_LIST,
+            &quest::list(npc, "Hello", &[(&q, quest::STATUS_AVAILABLE)]),
+        );
+        whole(opcode::SMSG_QUESTGIVER_QUEST_DETAILS, &quest::details(npc, &q));
+        whole(opcode::SMSG_QUESTGIVER_OFFER_REWARD, &quest::offer_reward(npc, &q));
+        whole(opcode::SMSG_QUESTGIVER_QUEST_COMPLETE, &quest::complete(&q, 170));
+        whole(opcode::SMSG_QUEST_QUERY_RESPONSE, &quest::query_response(&q));
+        whole(opcode::SMSG_QUESTUPDATE_ADD_KILL, &quest::add_kill(364, 1501, 3, 8, npc));
+        whole(opcode::SMSG_QUESTUPDATE_COMPLETE, &364u32.to_le_bytes());
+        whole(opcode::MSG_MOVE_TELEPORT_ACK, &teleport(7, 1, [1.0, 2.0, 3.0], 0.5, 1000));
+        whole(opcode::SMSG_REMOVED_SPELL, &removed_spell(143));
+        whole(opcode::SMSG_NOTIFICATION, &notification("Safe in Deathknell"));
     }
 }

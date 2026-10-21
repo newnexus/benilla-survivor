@@ -21,6 +21,8 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use survivor_server::picks::{self, Card, Offer};
 
+mod barrier;
+mod haven;
 mod queue;
 mod settings;
 
@@ -30,10 +32,12 @@ pub struct SurvivorUiPlugin;
 impl Plugin for SurvivorUiPlugin {
     fn build(&self, app: &mut App) {
         settings::seed();
+        // A run starting or ending resets the level: only a rise is a level-up.
+        benilla_app::SURVIVOR_LEVEL_RISES_ONLY.store(true, std::sync::atomic::Ordering::Relaxed);
         app.init_resource::<Screen>()
             .add_systems(Update, (show_offer, take_card, hover_cards).chain())
             .add_systems(Update, follow_aim)
-            .add_plugins(queue::plugin);
+            .add_plugins((queue::plugin, barrier::plugin, haven::plugin));
     }
 }
 

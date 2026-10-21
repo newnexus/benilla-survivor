@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 benilla-app = { path = "../benilla-app", default-features = false }
+benilla-assets = { path = "../benilla-assets", default-features = false }
+benilla-adt = { path = "../benilla-adt" }
 benilla-formats = { path = "../benilla-formats" }
 bevy.workspace = true
 survivor-server = { path = "../survivor-server" }

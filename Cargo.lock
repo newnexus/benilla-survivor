@@ -6243,6 +6243,7 @@ dependencies = [
  "benilla-app",
  "benilla-buildstamp",
  "survivor-server",
+ "survivor-touch",
  "survivor-ui",
 ]
 
@@ -6266,6 +6267,7 @@ dependencies = [
  "benilla-adt",
  "benilla-formats",
  "rusqlite",
+ "survivor-server",
 ]
 
 [[package]]
@@ -6301,7 +6303,9 @@ name = "survivor-ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "benilla-adt",
  "benilla-app",
+ "benilla-assets",
  "benilla-formats",
  "bevy",
  "survivor-server",

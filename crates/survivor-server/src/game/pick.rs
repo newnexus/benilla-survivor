@@ -224,7 +224,7 @@ impl Game {
 
     /// The world runs on: every timer moves past the pause, the player is free, and the
     /// creatures walking home set off again.
-    fn resume(&mut self, now: Instant) {
+    pub(super) fn resume(&mut self, now: Instant) {
         let Some(pick) = self.pick.take() else { return };
         self.shift_timers(now.saturating_duration_since(pick.paused_at));
         // The client's buff timers ran on through the pause.
@@ -294,6 +294,7 @@ impl Drop for Game {
     fn drop(&mut self) {
         crate::aim::set(None);
         crate::bar::clear();
+        crate::town::set_in_town(false);
         if self.pick.is_some() {
             picks::clear();
         }

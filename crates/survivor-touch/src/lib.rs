@@ -6,6 +6,9 @@
 //!   cards and every other button work by touch.
 //!
 //! It drives the client through [`benilla_app::SurvivorTouch`] and plain mouse input.
+//!
+//! [`SurvivorCameraPlugin`], on the phone and the desktop alike, swings the camera in behind the
+//! running character by itself; `$SURVIVOR_CAMERA_FOLLOW=0` turns it off.
 
 use bevy::input::mouse::MouseButtonInput;
 use bevy::input::touch::Touches;
@@ -23,6 +26,24 @@ const TAP_SLOP: f32 = 20.0;
 /// The look drag is scaled by this before it reaches the camera: a thumb sweeps fewer pixels
 /// than a mouse.
 const LOOK_GAIN: f32 = 1.5;
+
+/// The camera chase: seconds of no look drag before it resumes, and its time constant (a 90°
+/// turn is followed to within 10° in about 2.6 s).
+const FOLLOW_GRACE: f32 = 0.6;
+const FOLLOW_TIME_CONSTANT: f32 = 1.2;
+
+/// The camera eases back behind a moving character once the player stops dragging the view.
+pub struct SurvivorCameraPlugin;
+
+impl Plugin for SurvivorCameraPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(benilla_app::SurvivorCameraFollow {
+            enabled: std::env::var("SURVIVOR_CAMERA_FOLLOW").as_deref() != Ok("0"),
+            grace: FOLLOW_GRACE,
+            time_constant: FOLLOW_TIME_CONSTANT,
+        });
+    }
+}
 
 pub struct SurvivorTouchPlugin;
 

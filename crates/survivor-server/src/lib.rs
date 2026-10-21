@@ -12,6 +12,7 @@ mod packets;
 pub mod picks;
 mod realmd;
 mod roster;
+pub mod town;
 mod wire;
 mod world;
 
