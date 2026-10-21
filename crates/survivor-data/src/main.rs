@@ -599,13 +599,15 @@ fn main() -> Result<()> {
     // Spawns inside the zone at 1.12, kept when their creature is a foe and serves nothing.
     let mut stmt = conn.prepare(
         "SELECT guid, id, position_x, position_y, position_z, orientation, spawntimesecsmin,
-                wander_distance
+                wander_distance, movement_type
          FROM creature
          WHERE map = ?1 AND patch_min <= ?2 AND patch_max >= ?2
            AND position_x BETWEEN ?3 AND ?4 AND position_y BETWEEN ?5 AND ?6
          ORDER BY guid",
     )?;
-    let mut spawns = String::from("guid\tentry\tx\ty\tz\to\trespawn_s\twander\n");
+    let mut spawns = String::from("guid\tentry\tx\ty\tz\to\trespawn_s\twander\tmove\n");
+    // Spawns that walk a waypoint path (`movement_type` 2).
+    let mut walkers = Vec::new();
     let mut used = std::collections::BTreeSet::new();
     let mut npcs = String::from("guid\tentry\tx\ty\tz\to\tpatrol\tside\n");
     let mut npcs_used = std::collections::BTreeSet::new();
@@ -632,6 +634,7 @@ fn main() -> Result<()> {
                 ],
                 r.get::<_, i64>(6)?,
                 r.get::<_, f64>(7)?,
+                r.get::<_, i64>(8)?,
             ))
         },
     )?;
@@ -639,7 +642,7 @@ fn main() -> Result<()> {
     let mut zones = ZoneLookup::default();
     let mut outside = 0;
     for row in rows {
-        let (guid, entry, [x, y, z, o], respawn, wander) = row?;
+        let (guid, entry, [x, y, z, o], respawn, wander, movement) = row?;
         let Some(t) = templates.get(&entry) else { continue };
         // The rectangle overlaps the neighbours: keep only what stands on Tirisfall's own ground.
         let area = zones.area_at(&chain, x as f32, y as f32);
@@ -678,10 +681,32 @@ fn main() -> Result<()> {
         }
         writeln!(
             spawns,
-            "{guid}\t{entry}\t{x:.2}\t{y:.2}\t{z:.2}\t{o:.3}\t{respawn}\t{wander:.1}"
+            "{guid}\t{entry}\t{x:.2}\t{y:.2}\t{z:.2}\t{o:.3}\t{respawn}\t{wander:.1}\t{movement}"
         )?;
+        if movement == 2 {
+            walkers.push(guid);
+        }
     }
     std::fs::write(out.join("spawns.tsv"), spawns)?;
+    // The waypoint paths of the creatures that walk one, by spawn guid.
+    let mut paths = String::from("guid\tpoint\tx\ty\tz\twait_ms\n");
+    let mut stmt = conn.prepare(
+        "SELECT point, position_x, position_y, position_z, waittime
+         FROM creature_movement WHERE id = ?1 ORDER BY point",
+    )?;
+    for guid in &walkers {
+        let points: Vec<(i64, f64, f64, f64, i64)> = stmt
+            .query_map([guid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+            .collect::<Result<_, _>>()?;
+        for (point, x, y, z, wait) in points {
+            writeln!(paths, "{guid}\t{point}\t{x:.2}\t{y:.2}\t{z:.2}\t{wait}")?;
+        }
+    }
+    std::fs::write(out.join("mob_paths.tsv"), paths)?;
+    // Every kind a run's spawner sends, spawned in the zone or not (the bosses).
+    for e in survivor_server::waves::all_kinds() {
+        used.insert(i64::from(e));
+    }
     if add_guards(&conn, &chain, out, &mut npcs)? > 0 {
         npcs_used.insert(DEATHGUARD_ELITE);
     }

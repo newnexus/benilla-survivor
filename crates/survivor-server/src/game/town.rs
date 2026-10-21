@@ -147,15 +147,16 @@ impl Game {
             return;
         }
         match (self.mode, town_at(self.player.pos)) {
-            (Mode::Town(_), None) => self.start_run(),
+            (Mode::Town(_), None) => self.start_run(now),
             (Mode::Run, Some(i)) => self.enter_town(i, false, now),
             _ => {}
         }
     }
 
     /// Out through the barrier: a fresh run at level 1.
-    fn start_run(&mut self) {
+    fn start_run(&mut self, now: Instant) {
         self.mode = Mode::Run;
+        self.waves = Some(self.new_waves(now));
         self.player.level = 1;
         self.player.xp = 0;
         self.reset_character(self.curve.next_level(1));
@@ -168,6 +169,8 @@ impl Game {
     fn enter_town(&mut self, i: usize, died: bool, now: Instant) {
         let reached = self.player.level;
         self.mode = Mode::Town(i);
+        self.waves = None;
+        self.clear_spawned(now);
         // An open level-up pick goes with the run.
         if self.pick.is_some() {
             picks::clear();
@@ -375,7 +378,16 @@ impl Game {
                     let n = &self.npcs[i];
                     let t = &self.data.creatures[&n.entry];
                     let health = t.health.0.max(1);
-                    packets::creature_create(n.guid, t, t.level.0, health, health, n.here(now), n.facing)
+                    packets::creature_create(
+                        n.guid,
+                        t,
+                        t.scale,
+                        t.level.0,
+                        health,
+                        health,
+                        n.here(now),
+                        n.facing,
+                    )
                 })
                 .collect();
             self.send(opcode::SMSG_UPDATE_OBJECT, &packets::update_object(&updates));

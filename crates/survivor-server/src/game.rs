@@ -18,6 +18,7 @@ mod meal;
 mod pick;
 mod quest;
 mod rotation;
+mod spawner;
 mod town;
 pub(crate) use meal::PackItem;
 
@@ -113,9 +114,64 @@ struct Mob {
     state: MobState,
     next_swing: Instant,
     respawn: Duration,
+    /// The model's size: the template's, or bigger for a boss.
+    scale: f32,
+    /// Idle: how far from home it strolls, and the waypoint path it walks instead (a spawn
+    /// guid in `mob_paths`), the point it walks to next, and when it sets off.
+    walk_speed: f32,
+    wander: f32,
+    route: Option<u32>,
+    route_next: usize,
+    idle_until: Instant,
+    /// Sent by a run's spawner: chases from the start, follows anywhere, never comes back.
+    spawned: bool,
 }
 
 impl Mob {
+    /// A creature of `t` at `level` standing at `pos`, idle and at full health. Health and
+    /// damage come from the template's range at that level, past its top by a third more health
+    /// and an eighth more damage a level.
+    fn new(t: &crate::data::CreatureTemplate, level: u32, guid: u64, pos: [f32; 3], facing: f32, now: Instant) -> Self {
+        let span = t.level.1.saturating_sub(t.level.0);
+        let at = level.clamp(t.level.0, t.level.1);
+        let frac = if span == 0 {
+            0.0
+        } else {
+            (at - t.level.0) as f32 / span as f32
+        };
+        let over = level.saturating_sub(t.level.1) as f32;
+        let health = (t.health.0 as f32 + (t.health.1 as f32 - t.health.0 as f32) * frac)
+            * (1.0 + over / 3.0);
+        let damage = (t.damage.0 + (t.damage.1 - t.damage.0) * frac) * (1.0 + over / 8.0);
+        let max_health = ((health * HEALTH_SCALE).round() as u32).max(1);
+        Self {
+            guid,
+            entry: t.entry,
+            level,
+            max_health,
+            health: max_health,
+            damage: (damage * 0.85, damage * 1.15),
+            attack: Duration::from_millis(u64::from(t.attack_ms.max(1000))),
+            run_speed: packets::STOCK_SPEEDS[1] * t.speed.1.max(0.5),
+            detection: t.detection.clamp(8.0, 20.0),
+            hostile: t.hostile,
+            home: pos,
+            facing,
+            pos,
+            path: None,
+            state: MobState::Idle,
+            next_swing: now,
+            respawn: Duration::from_secs(60),
+            scale: if t.scale > 0.0 { t.scale } else { 1.0 },
+            walk_speed: packets::STOCK_SPEEDS[0] * t.speed.0.max(0.3),
+            wander: 0.0,
+            route: None,
+            route_next: 1,
+            idle_until: now,
+            spawned: false,
+        }
+    }
+
     fn alive(&self) -> bool {
         !matches!(self.state, MobState::Dead { .. })
     }
@@ -231,6 +287,8 @@ pub(crate) struct Game {
     /// The player has moved since the world entry: the client is past its loading screen, so a
     /// quest giver's panel will be seen.
     walked: bool,
+    /// The run's spawner, while out of town.
+    waves: Option<spawner::Waves>,
     /// The test switches' state is in (`$SURVIVOR_QUESTS`), done on the first tick.
     seeded: bool,
     /// The world entry, which the client's movement clock counts from.
@@ -308,33 +366,16 @@ impl Game {
                 let t = &data.creatures[&s.entry];
                 let span = t.level.1.saturating_sub(t.level.0);
                 let level = t.level.0 + (rng.next() % u64::from(span + 1)) as u32;
-                let frac = if span == 0 {
-                    0.0
-                } else {
-                    (level - t.level.0) as f32 / span as f32
-                };
-                let health = t.health.0 as f32 + (t.health.1 as f32 - t.health.0 as f32) * frac;
-                let damage = t.damage.0 + (t.damage.1 - t.damage.0) * frac;
-                let max_health = ((health * HEALTH_SCALE).round() as u32).max(1);
-                Mob {
-                    guid: 0xF130_0000_0000_0000 | u64::from(t.entry) << 24 | (i as u64 + 1),
-                    entry: t.entry,
-                    level,
-                    max_health,
-                    health: max_health,
-                    damage: (damage * 0.85, damage * 1.15),
-                    attack: Duration::from_millis(u64::from(t.attack_ms.max(1000))),
-                    run_speed: packets::STOCK_SPEEDS[1] * t.speed.1.max(0.5),
-                    detection: t.detection.clamp(8.0, 20.0),
-                    hostile: t.hostile,
-                    home: s.pos,
-                    facing: s.facing,
-                    pos: s.pos,
-                    path: None,
-                    state: MobState::Idle,
-                    next_swing: now,
-                    respawn: Duration::from_secs(u64::from(s.respawn_s.clamp(30, 300))),
-                }
+                let guid = 0xF130_0000_0000_0000 | u64::from(t.entry) << 24 | (i as u64 + 1);
+                let mut m = Mob::new(t, level, guid, s.pos, s.facing, now);
+                m.respawn = Duration::from_secs(u64::from(s.respawn_s.clamp(30, 300)));
+                // Idle as in the live game: a stroll round home, or the spawn's own path.
+                m.wander = s.wander.min(12.0);
+                m.route = (s.walks_path && data.mob_paths.get(&s.guid).is_some_and(|p| p.len() > 1))
+                    .then_some(s.guid);
+                // Not all setting off on the same tick.
+                m.idle_until = now + Duration::from_millis(rng.next() % 8000);
+                m
             })
             .collect();
         let max_health = base_health(c.class);
@@ -369,6 +410,7 @@ impl Game {
             start_buttons: buttons,
             teleport_counter: 0,
             seeded: false,
+            waves: None,
             walked: false,
             started: now,
             player: Player {
@@ -406,6 +448,9 @@ impl Game {
             rng,
         };
         game.start_spells = game.player.spells.clone();
+        if game.in_run() {
+            game.waves = Some(game.new_waves(now));
+        }
         game.sort_start_bar(&buttons);
         game
     }
@@ -466,6 +511,7 @@ impl Game {
         self.walk_beats(now);
         self.update_npcs(now);
         self.talk_nearby(now);
+        self.tick_waves(now);
         self.player_attack(now);
         self.tick_spells(now);
         self.tick_meals(now);
@@ -527,6 +573,7 @@ impl Game {
                     packets::creature_create(
                         m.guid,
                         &self.data.creatures[&m.entry],
+                        m.scale,
                         m.level,
                         m.health,
                         m.max_health,
@@ -725,7 +772,8 @@ impl Game {
         let m = &mut self.mobs[i];
         match m.state {
             MobState::Dead { respawn, .. } => {
-                if now >= respawn && !shown {
+                // A spawned creature is gone for good; its slot is reused.
+                if now >= respawn && !shown && !m.spawned {
                     m.state = MobState::Idle;
                     m.health = m.max_health;
                     m.pos = m.home;
@@ -738,9 +786,10 @@ impl Game {
                     m.pos = m.here(now);
                     m.path = None;
                 }
-                if player_alive && m.hostile && dist2d(m.pos, me) <= m.detection {
+                if player_alive && m.hostile && dist2d(m.here(now), me) <= m.detection {
                     m.state = MobState::Chasing;
                 } else {
+                    self.idle_walk(i, now);
                     return;
                 }
             }
@@ -762,7 +811,7 @@ impl Game {
         // Chasing.
         let m = &mut self.mobs[i];
         let here = m.here(now);
-        if !player_alive || dist2d(here, m.home) > LEASH {
+        if !player_alive || (!m.spawned && dist2d(here, m.home) > LEASH) {
             m.state = MobState::Returning;
             let dur = Duration::from_secs_f32(dist2d(here, m.home) / m.run_speed);
             m.path = Some(Path {

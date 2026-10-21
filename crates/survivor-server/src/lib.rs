@@ -13,6 +13,7 @@ pub mod picks;
 mod realmd;
 mod roster;
 pub mod town;
+pub mod waves;
 mod wire;
 mod world;
 

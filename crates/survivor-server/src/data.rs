@@ -31,10 +31,16 @@ pub(crate) struct CreatureTemplate {
 
 #[derive(Clone, Debug)]
 pub(crate) struct Spawn {
+    /// vmangos's spawn guid, which names its waypoint path.
+    pub(crate) guid: u32,
     pub(crate) entry: u32,
     pub(crate) pos: [f32; 3],
     pub(crate) facing: f32,
     pub(crate) respawn_s: u32,
+    /// How far from home it wanders while idle, yards (0 stands still).
+    pub(crate) wander: f32,
+    /// It walks its waypoint path in [`WorldData::mob_paths`].
+    pub(crate) walks_path: bool,
 }
 
 /// A town person's beat (`npcs.tsv`'s patrol and side): the path in [`WorldData::patrols`] they
@@ -113,6 +119,9 @@ pub(crate) struct SpellInfo {
     pub(crate) targets: [u32; 3],
 }
 
+/// `FactionTemplate.dbc` 14, "Monster": hostile to every player.
+const FACTION_MONSTER: u32 = 14;
+
 /// `UNIT_NPC_FLAG_QUESTGIVER`.
 pub(crate) const NPC_QUESTGIVER: u32 = 0x2;
 
@@ -157,6 +166,8 @@ pub(crate) struct WorldData {
     pub(crate) npcs: Vec<(Spawn, Beat)>,
     /// Patrol paths by id, their points in order.
     pub(crate) patrols: HashMap<u32, Vec<PatrolPoint>>,
+    /// The waypoint paths creatures walk while idle, by spawn guid.
+    pub(crate) mob_paths: HashMap<u32, Vec<PatrolPoint>>,
     pub(crate) quests: Vec<Quest>,
     pub(crate) items: HashMap<u32, ItemTemplate>,
     /// `(class, item, amount)`.
@@ -252,10 +263,13 @@ impl WorldData {
                 continue;
             }
             d.spawns.push(Spawn {
+                guid: num(r.first()),
                 entry,
                 pos: [num(r.get(2)), num(r.get(3)), num(r.get(4))],
                 facing: num(r.get(5)),
                 respawn_s: num(r.get(6)),
+                wander: num(r.get(7)),
+                walks_path: num::<u32>(r.get(8)) == 2,
             });
         }
         for r in rows(&dir, "npcs.tsv") {
@@ -265,16 +279,25 @@ impl WorldData {
             }
             d.npcs.push((
                 Spawn {
+                    guid: num(r.first()),
                     entry,
                     pos: [num(r.get(2)), num(r.get(3)), num(r.get(4))],
                     facing: num(r.get(5)),
                     respawn_s: 0,
+                    wander: 0.0,
+                    walks_path: false,
                 },
                 Beat {
                     patrol: num(r.get(6)),
                     side: num(r.get(7)),
                 },
             ));
+        }
+        for r in rows(&dir, "mob_paths.tsv") {
+            d.mob_paths.entry(num(r.first())).or_default().push(PatrolPoint {
+                pos: [num(r.get(2)), num(r.get(3)), num(r.get(4))],
+                wait_ms: num(r.get(5)),
+            });
         }
         for r in rows(&dir, "patrols.tsv") {
             d.patrols.entry(num(r.first())).or_default().push(PatrolPoint {
@@ -381,8 +404,21 @@ impl WorldData {
         // (`UNIT_NPC_FLAG_QUESTGIVER`), vendors and trainers stay plain townsfolk for now.
         let talks: std::collections::HashSet<u32> =
             d.quests.iter().flat_map(|q| [q.giver, q.ender]).collect();
+        let people: std::collections::HashSet<u32> = d.npcs.iter().map(|n| n.0.entry).collect();
+        let bosses: std::collections::HashSet<u32> =
+            crate::waves::BOSSES.iter().map(|b| b.0).collect();
         for t in d.creatures.values_mut() {
             t.npc_flags = if talks.contains(&t.entry) { NPC_QUESTGIVER } else { 0 };
+            // Every foe attacks on sight: a neutral one takes the hostile "Monster" faction, so
+            // the client names it in red too.
+            if !people.contains(&t.entry) && !t.hostile {
+                t.hostile = true;
+                t.faction = FACTION_MONSTER;
+            }
+            // A boss shows the elite frame.
+            if bosses.contains(&t.entry) {
+                t.rank = t.rank.max(1);
+            }
         }
         eprintln!(
             "survivor-server: {} spawns of {} creature kinds, {} town people, {} quests, {} items, \
@@ -484,10 +520,13 @@ mod tests {
         );
         for _ in 0..1500 {
             d.spawns.push(Spawn {
+                guid: 0,
                 entry: 1,
                 pos: [0.0; 3],
                 facing: 0.0,
                 respawn_s: 300,
+                wander: 0.0,
+                walks_path: false,
             });
         }
         let curve = XpCurve::for_world(&d);

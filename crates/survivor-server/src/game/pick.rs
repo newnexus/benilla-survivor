@@ -270,8 +270,12 @@ impl Game {
         if let Some(t) = &mut p.dead_until {
             *t += by;
         }
+        if let Some(w) = &mut self.waves {
+            w.shift(by);
+        }
         for m in &mut self.mobs {
             m.next_swing += by;
+            m.idle_until += by;
             if let MobState::Dead { despawn, respawn } = &mut m.state {
                 *despawn += by;
                 *respawn += by;

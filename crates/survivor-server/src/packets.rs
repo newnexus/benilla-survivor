@@ -194,6 +194,7 @@ const ITEM_TYPE_MASK: u32 = 0x03;
 pub(crate) fn creature_create(
     guid: u64,
     t: &CreatureTemplate,
+    scale: f32,
     level: u32,
     health: u32,
     max_health: u32,
@@ -205,7 +206,7 @@ pub(crate) fn creature_create(
         .guid(f::GUID, guid)
         .set(f::TYPE, UNIT_TYPE_MASK)
         .set(f::ENTRY, t.entry)
-        .setf(f::SCALE_X, if t.scale > 0.0 { t.scale } else { 1.0 })
+        .setf(f::SCALE_X, if scale > 0.0 { scale } else { 1.0 })
         .set(f::HEALTH, health)
         .set(f::MAXHEALTH, max_health)
         .set(f::LEVEL, level)
@@ -756,7 +757,7 @@ mod tests {
     fn creature_and_item_creates_parse() {
         let guid = 0xF130_0000_0000_0000 | (1512 << 24) | 1;
         let body = update_object(&[
-            creature_create(guid, &template(), 2, 19, 19, [1.0, 2.0, 3.0], 0.5),
+            creature_create(guid, &template(), 0.4, 2, 19, 19, [1.0, 2.0, 3.0], 0.5),
             item_create(0x4000_0000_0000_0001, 7, &ItemTemplate::default(), 1),
             Update::OutOfRange(vec![guid]),
         ]);
