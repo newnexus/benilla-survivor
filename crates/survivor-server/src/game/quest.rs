@@ -12,6 +12,7 @@ use benilla_protocol::messages::opcode;
 use super::{dist2d, Game};
 use crate::data::{Quest, NPC_QUESTGIVER};
 use crate::packets::{f, quest, Fields};
+use crate::quest_board::{self, Answer, Panel, PanelKind};
 
 /// How close a quest giver must be to speak up, and how far to walk off before it will again.
 const TALK_RANGE: f32 = 5.0;
@@ -113,18 +114,19 @@ impl Game {
     }
 
     /// Open `guid`'s panel, if it has something to say: a reward first, then its quests.
-    pub(crate) fn quest_hello(&self, guid: u64) -> bool {
+    pub(crate) fn quest_hello(&mut self, guid: u64) -> bool {
         let Some(entry) = self.npc_entry(guid) else {
             return false;
         };
-        if let Some(q) = self.rewardable(entry).first() {
-            self.send(opcode::SMSG_QUESTGIVER_OFFER_REWARD, &quest::offer_reward(guid, q));
+        if let Some(q) = self.rewardable(entry).first().map(|q| q.id) {
+            self.open_quest_panel(guid, q, PanelKind::Reward);
             return true;
         }
         match self.available(entry).as_slice() {
             [] => false,
             [q] => {
-                self.send(opcode::SMSG_QUESTGIVER_QUEST_DETAILS, &quest::details(guid, q));
+                let q = q.id;
+                self.open_quest_panel(guid, q, PanelKind::Offer);
                 true
             }
             many => {
@@ -153,6 +155,10 @@ impl Game {
                 .is_none_or(|n| dist2d(n.here(now), me) > TALK_RESET);
             if far {
                 self.talked = None;
+                // Walked off: the window goes too.
+                if self.open_panel.take().is_some() {
+                    quest_board::clear();
+                }
             }
             return;
         }
@@ -171,13 +177,98 @@ impl Game {
     }
 
     /// `CMSG_QUESTGIVER_QUERY_QUEST`: a row of the list was picked.
-    pub(crate) fn quest_query_quest(&self, guid: u64, id: u32) {
+    pub(crate) fn quest_query_quest(&mut self, guid: u64, id: u32) {
         let Some(entry) = self.npc_entry(guid) else { return };
-        if let Some(q) = self.available(entry).into_iter().find(|q| q.id == id) {
-            self.send(opcode::SMSG_QUESTGIVER_QUEST_DETAILS, &quest::details(guid, q));
-        } else if let Some(q) = self.rewardable(entry).into_iter().find(|q| q.id == id) {
-            self.send(opcode::SMSG_QUESTGIVER_OFFER_REWARD, &quest::offer_reward(guid, q));
+        let offer = self.available(entry).iter().any(|q| q.id == id);
+        let reward = self.rewardable(entry).iter().any(|q| q.id == id);
+        if offer || reward {
+            // The stock list closes; ours opens.
+            self.send(opcode::SMSG_GOSSIP_COMPLETE, &[]);
+            let kind = if offer { PanelKind::Offer } else { PanelKind::Reward };
+            self.open_quest_panel(guid, id, kind);
         }
+    }
+
+    /// Put quest `id` of giver `guid` on the survivor's quest window.
+    fn open_quest_panel(&mut self, guid: u64, id: u32, kind: PanelKind) {
+        let Some(q) = self.quest(id).cloned() else { return };
+        let text = match kind {
+            PanelKind::Offer => &q.details,
+            PanelKind::Reward => &q.offer_text,
+        };
+        let panel = Panel {
+            id: 0,
+            kind,
+            title: q.title.clone(),
+            text: self.fill(text),
+            objectives: self.fill(&q.objectives),
+            money: q.money,
+            xp: q.xp,
+        };
+        let board_id = quest_board::post(panel);
+        self.open_panel = Some((board_id, guid, id, kind));
+    }
+
+    /// The window's answer: Accept takes the quest (or hands it in), the X closes it.
+    pub(super) fn take_panel_answer(&mut self) {
+        let Some((id, answer)) = quest_board::take_answer() else { return };
+        let Some((open, guid, quest, kind)) = self.open_panel else { return };
+        if id != open {
+            return;
+        }
+        self.open_panel = None;
+        quest_board::clear();
+        if answer == Answer::Close {
+            return;
+        }
+        match kind {
+            PanelKind::Offer => self.quest_accept(guid, quest),
+            PanelKind::Reward => self.quest_turn_in(guid, quest),
+        }
+    }
+
+    /// A quest text with WoW's macros filled in: `$N` the name, `$C` the class, `$R` the race,
+    /// `$Gmale:female;` by gender, `$B` a line break.
+    fn fill(&self, text: &str) -> String {
+        let class = match self.player.class {
+            1 => "Warrior",
+            4 => "Rogue",
+            5 => "Priest",
+            8 => "Mage",
+            9 => "Warlock",
+            _ => "adventurer",
+        };
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find('$') {
+            out.push_str(&rest[..at]);
+            let tail = &rest[at + 1..];
+            let mut chars = tail.chars();
+            match chars.next() {
+                Some('N' | 'n') => out.push_str(&self.name),
+                Some('C' | 'c') => out.push_str(class),
+                Some('R' | 'r') => out.push_str("Undead"),
+                Some('B' | 'b') => out.push('\n'),
+                Some('G' | 'g') => {
+                    // `$Gmale:female;`
+                    let body = &tail[1..];
+                    if let Some(end) = body.find(';') {
+                        let (m, f) = body[..end].split_once(':').unwrap_or((&body[..end], ""));
+                        out.push_str(if self.gender == 0 { m } else { f });
+                        rest = &body[end + 1..];
+                        continue;
+                    }
+                }
+                Some(other) => {
+                    out.push('$');
+                    out.push(other);
+                }
+                None => out.push('$'),
+            }
+            rest = &tail[tail.chars().next().map_or(0, char::len_utf8)..];
+        }
+        out.push_str(rest);
+        out
     }
 
     /// `CMSG_QUESTGIVER_ACCEPT_QUEST`.
@@ -201,10 +292,11 @@ impl Game {
 
     /// `CMSG_QUESTGIVER_COMPLETE_QUEST` and `_REQUEST_REWARD`: the reward panel of a finished
     /// quest.
-    pub(crate) fn quest_reward_panel(&self, guid: u64, id: u32) {
+    pub(crate) fn quest_reward_panel(&mut self, guid: u64, id: u32) {
         let Some(entry) = self.npc_entry(guid) else { return };
-        if let Some(q) = self.rewardable(entry).into_iter().find(|q| q.id == id) {
-            self.send(opcode::SMSG_QUESTGIVER_OFFER_REWARD, &quest::offer_reward(guid, q));
+        if self.rewardable(entry).iter().any(|q| q.id == id) {
+            self.send(opcode::SMSG_GOSSIP_COMPLETE, &[]);
+            self.open_quest_panel(guid, id, PanelKind::Reward);
         }
     }
 

@@ -10,6 +10,7 @@ mod data;
 mod game;
 mod packets;
 pub mod picks;
+pub mod quest_board;
 mod realmd;
 mod roster;
 pub mod town;

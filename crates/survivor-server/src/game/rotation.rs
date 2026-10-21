@@ -1,8 +1,9 @@
 //! The survivor's action bars and its automatic rotation.
 //!
 //! - The main bar's front is the cast queue: the damage spells, button 1 first. The auto-cast
-//!   fires the first one that is ready, and that spell goes to the back of the queue, so the
-//!   order cycles; every damage spell also gets a cooldown of its own, so a slow one is skipped
+//!   fires the best-rated one that is ready (the most damage per point of mana, rage or energy,
+//!   counting every enemy it would hit), and that spell goes to the back of the queue, so the
+//!   order shows what fired; every damage spell also gets a cooldown of its own, so a slow one is skipped
 //!   for a turn and the order shifts. Spells around the caster (Frost Nova, Arcane Explosion)
 //!   wait for a crowd: three creatures close by, or an elite.
 //! - The main bar's end holds the buffs and heals: a buff is cast while it is not up, a heal when
@@ -199,8 +200,86 @@ impl Game {
                 return Some(id);
             }
         }
-        self.bars.queue.iter().copied().find(|&id| {
+        let usable = |id: u32| {
             ready(id) && (!self.spell(id).is_some_and(Self::is_area) || self.crowded(now))
-        })
+        };
+        // The best-rated ready spell: the most damage for what it costs, counting every enemy
+        // it would hit. A spell on cooldown gives way to the next best.
+        self.bars
+            .queue
+            .iter()
+            .copied()
+            .filter(|&id| usable(id))
+            .map(|id| (id, self.damage_per_power(id, now)))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+
+    /// The damage a cast of `id` would do now, all told: its average hit (and its damage over
+    /// time) with upgrades, times the enemies it would strike.
+    pub(super) fn expected_damage(&self, id: u32, now: Instant) -> f32 {
+        let Some(s) = self.spell(id) else { return 0.0 };
+        let mut one = 0.0;
+        for e in 0..3 {
+            let avg = (s.base_points[e] + 1) as f32 + s.die_sides[e].max(0) as f32 / 2.0;
+            match s.effects[e] {
+                2 => one += avg,
+                // Weapon strikes: the weapon's average swing and the ability's bonus.
+                17 | 58 | 121 => one += (self.player.weapon.0 + self.player.weapon.1) / 2.0 + avg,
+                31 => one += (self.player.weapon.0 + self.player.weapon.1) / 2.0 * avg / 100.0,
+                6 if s.auras[e] == 3 => {
+                    let every = s.amplitudes[e].max(1000);
+                    one += avg * (s.duration_ms / every).max(1) as f32;
+                }
+                _ => {}
+            }
+        }
+        let mods = self.mods(id);
+        one * mods.damage * self.expected_hits(id, now) as f32
+    }
+
+    /// How many enemies a cast of `id` would strike now: all round the caster for a spell around
+    /// them, the target and those near it for an upgraded one, else the one.
+    fn expected_hits(&self, id: u32, now: Instant) -> usize {
+        let Some(s) = self.spell(id) else { return 0 };
+        let near = |at: [f32; 3], r: f32| {
+            (0..self.mobs.len())
+                .filter(|&i| {
+                    self.mobs[i].alive()
+                        && self.visible.contains(&i)
+                        && dist2d(self.mobs[i].here(now), at) <= r
+                })
+                .count()
+        };
+        if Self::is_area(s) {
+            return near(self.player.pos, AOE_RADIUS);
+        }
+        let mods = self.mods(id);
+        let Some(at) = self
+            .player
+            .target
+            .and_then(|g| self.mob_index(g))
+            .map(|i| self.mobs[i].here(now))
+        else {
+            return 1;
+        };
+        if mods.legendary {
+            near(at, super::upgrade::LEGENDARY_SPLASH).max(1)
+        } else if mods.targets > 0 {
+            near(at, AOE_RADIUS).clamp(1, 1 + mods.targets as usize)
+        } else {
+            1
+        }
+    }
+
+    /// Damage per point of power spent; a free spell outranks every paid one.
+    fn damage_per_power(&self, id: u32, now: Instant) -> f32 {
+        let damage = self.expected_damage(id, now);
+        let cost = self.spell(id).map_or(0, |s| self.cost_of(s));
+        if cost == 0 {
+            1.0e6 + damage
+        } else {
+            damage / cost as f32
+        }
     }
 }

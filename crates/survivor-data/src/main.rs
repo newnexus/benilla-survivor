@@ -261,6 +261,64 @@ fn export_spells(
     Ok(count)
 }
 
+/// `chests.tsv`: every chest vmangos places on Tirisfall's ground (a `GAMEOBJECT_TYPE_CHEST` named
+/// a chest, lockbox or coffer), outside the towns, with its template's look.
+fn export_chests(
+    conn: &Connection,
+    chain: &benilla_formats::Chain,
+    zones: &mut ZoneLookup,
+    areas: &benilla_formats::AreaTableCatalog,
+    out: &Path,
+) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT g.guid, g.id, t.name, t.displayId, t.size, g.position_x, g.position_y,
+                g.position_z, g.orientation, g.rotation0, g.rotation1, g.rotation2, g.rotation3
+         FROM gameobject g JOIN gameobject_template t ON t.entry = g.id
+         WHERE g.map = ?1 AND g.patch_min <= ?2 AND g.patch_max >= ?2 AND t.type = 3
+           AND g.position_x BETWEEN ?3 AND ?4 AND g.position_y BETWEEN ?5 AND ?6
+           AND (t.name LIKE '%Chest%' OR t.name LIKE '%Lockbox%' OR t.name LIKE '%Coffer%')
+           AND t.patch = (SELECT MAX(patch) FROM gameobject_template u
+                          WHERE u.entry = t.entry AND u.patch <= ?2)
+         ORDER BY g.guid",
+    )?;
+    let mut tsv = String::from("guid\tentry\tname\tdisplay\tsize\tx\ty\tz\to\tr0\tr1\tr2\tr3\n");
+    let mut count = 0;
+    let mut rows = stmt.query(rusqlite::params![
+        MAP,
+        PATCH,
+        TIRISFALL_X.0,
+        TIRISFALL_X.1,
+        TIRISFALL_Y.0,
+        TIRISFALL_Y.1
+    ])?;
+    while let Some(r) = rows.next()? {
+        let (x, y, z): (f64, f64, f64) = (r.get(5)?, r.get(6)?, r.get(7)?);
+        let area = zones.area_at(chain, x as f32, y as f32);
+        if area.and_then(|a| areas.top_zone(a)) != Some(TIRISFALL_ZONE)
+            || survivor_server::town::town_at([x as f32, y as f32, z as f32]).is_some()
+        {
+            continue;
+        }
+        let name: String = r.get(2)?;
+        writeln!(
+            tsv,
+            "{}\t{}\t{name}\t{}\t{:.2}\t{x:.2}\t{y:.2}\t{z:.2}\t{:.3}\t{:.4}\t{:.4}\t{:.4}\t{:.4}",
+            r.get::<_, i64>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, f64>(4)?,
+            r.get::<_, f64>(8)?,
+            r.get::<_, f64>(9)?,
+            r.get::<_, f64>(10)?,
+            r.get::<_, f64>(11)?,
+            r.get::<_, f64>(12)?,
+        )?;
+        count += 1;
+    }
+    std::fs::write(out.join("chests.tsv"), tsv)?;
+    Ok(count)
+}
+
 /// The towns' guards that walk a beat: vmangos's own patrols of Deathguard Oliver and Deathguard
 /// Phillip through Deathknell (`creature_movement_template`). Each gets a Deathguard Elite at
 /// their side.
@@ -289,7 +347,7 @@ fn add_guards(
     for town in survivor_server::town::TOWNS {
         for &a in town.entrances {
             let (sin, cos) = a.sin_cos();
-            let r = town.radius + POST_OUT;
+            let r = survivor_server::town::edge(town, a) + POST_OUT;
             for across in POST_ACROSS {
                 for side in [-1.0f32, 1.0] {
                     let x = town.centre[0] + cos * r - sin * across * side;
@@ -655,7 +713,7 @@ fn main() -> Result<()> {
             .map(|f| f.reaction_toward(player));
         let foe = matches!(reaction, Some(Reaction::Hostile | Reaction::Neutral));
         // A town keeps its own people (the quest givers among them) and no foe.
-        let in_town = survivor_server::town::town_at([x as f32, y as f32, z as f32]).is_some();
+        let in_town = survivor_server::town::near_town([x as f32, y as f32, z as f32]).is_some();
         if in_town {
             if !foe && t.kind != CRITTER && t.display != 0 {
                 npcs_used.insert(entry);
@@ -688,6 +746,8 @@ fn main() -> Result<()> {
         }
     }
     std::fs::write(out.join("spawns.tsv"), spawns)?;
+    let chests = export_chests(&conn, &chain, &mut zones, &areas, out)?;
+    println!("survivor-data: {chests} chests");
     // The waypoint paths of the creatures that walk one, by spawn guid.
     let mut paths = String::from("guid\tpoint\tx\ty\tz\twait_ms\n");
     let mut stmt = conn.prepare(

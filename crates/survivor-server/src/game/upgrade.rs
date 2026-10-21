@@ -30,6 +30,8 @@ const TARGETS: f32 = 1.0;
 /// A legendary skill also hits every enemy this near its target, and this much harder.
 pub(super) const LEGENDARY_SPLASH: f32 = 8.0;
 const LEGENDARY_DAMAGE: f32 = 0.25;
+/// Every spell costs this share of its 1.12 mana, rage or energy.
+const BASE_COST: f32 = 0.6;
 /// No upgrade takes a stat past these.
 const FLOOR: f32 = 0.3;
 
@@ -117,9 +119,9 @@ impl Game {
         self.upgrades.get(&self.chain(spell).0).copied().unwrap_or_default()
     }
 
-    /// The mana `s` costs with its upgrades.
+    /// The mana, rage or energy `s` costs: the survivor's share of 1.12's, then its upgrades.
     pub(super) fn cost_of(&self, s: &crate::data::SpellInfo) -> u32 {
-        (s.cost as f32 * self.mods(s.id).cost).round() as u32
+        (s.cost as f32 * BASE_COST * self.mods(s.id).cost).round() as u32
     }
 
     /// The cast time of `s` with its upgrades, ms.

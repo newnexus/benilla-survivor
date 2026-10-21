@@ -281,9 +281,13 @@ fn main() -> Result<()> {
     // `--creatures <creatures.tsv>` adds every model (and its sound folder) the server spawns.
     let mut logs: Vec<PathBuf> = Vec::new();
     let mut creatures_tsv: Option<PathBuf> = None;
+    // `--gameobjects <chests.tsv>`: the models of the objects the server places (column 4).
+    let mut objects_tsv: Option<PathBuf> = None;
     while let Some(a) = args.next() {
         if a == "--creatures" {
             creatures_tsv = args.next().map(PathBuf::from);
+        } else if a == "--gameobjects" {
+            objects_tsv = args.next().map(PathBuf::from);
         } else {
             logs.push(PathBuf::from(a));
         }
@@ -344,6 +348,25 @@ fn main() -> Result<()> {
         let mut sound_chain = Chain::open(std::path::Path::new(&data))?;
         for path in creature_sounds(&mut sound_chain, &displays)? {
             p.keep(&path);
+        }
+    }
+    if let Some(tsv) = &objects_tsv {
+        let text = std::fs::read_to_string(tsv).with_context(|| tsv.display().to_string())?;
+        let displays: std::collections::BTreeSet<u32> = text
+            .lines()
+            .skip(1)
+            .filter_map(|l| l.split('\t').nth(3)?.parse().ok())
+            .collect();
+        let field = |r: &[u8], i: usize| u32::from_le_bytes(r[i * 4..i * 4 + 4].try_into().expect("4"));
+        let (_, rows, strings) = dbc(&chain, "DBFilesClient\\GameObjectDisplayInfo.dbc")?;
+        for d in displays {
+            let Some(row) = rows.iter().find(|r| field(r, 0) == d) else { continue };
+            let off = field(row, 1) as usize;
+            let end = strings[off..].iter().position(|&b| b == 0).map_or(strings.len(), |e| off + e);
+            let model = String::from_utf8_lossy(&strings[off..end]).into_owned();
+            if !model.is_empty() {
+                p.keep_asset(&model);
+            }
         }
     }
     let mut sound_chain = Chain::open(std::path::Path::new(&data))?;

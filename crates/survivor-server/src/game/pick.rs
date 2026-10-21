@@ -133,9 +133,10 @@ impl Game {
     }
 
     /// The cards for one level: learning cards and upgrade cards mixed, each upgrade's rarity
-    /// rolled, no skill upgraded twice in one offer.
+    /// rolled, no skill on two cards of one offer.
     fn deal(&mut self) -> (Vec<Card>, Vec<Option<super::upgrade::Boost>>) {
-        let mut learn = self.roll_offer().into_iter();
+        let offer = self.roll_offer();
+        let mut learn = offer.into_iter();
         let (mut cards, mut boosts, mut taken) = (Vec::new(), Vec::new(), Vec::new());
         for _ in 0..OFFER {
             let boost = if self.rng.unit() < BOOST_SHARE {
@@ -148,7 +149,7 @@ impl Game {
                     let card = self.boost_card(&b);
                     (card, Some(b))
                 }
-                None => match learn.next() {
+                None => match learn.by_ref().find(|c| !taken.contains(&self.chain(c.spell).0)) {
                     Some(c) => (c, None),
                     None => match self.roll_boost(&taken) {
                         Some(b) => (self.boost_card(&b), Some(b)),
@@ -156,9 +157,10 @@ impl Game {
                     },
                 },
             };
-            if let Some(b) = &boost {
-                taken.push(b.chain);
-            }
+            taken.push(match &boost {
+                Some(b) => b.chain,
+                None => self.chain(card.spell).0,
+            });
             cards.push(card);
             boosts.push(boost);
         }
@@ -372,6 +374,7 @@ impl Drop for Game {
         crate::bar::clear();
         crate::town::set_in_town(false);
         crate::town::set_countdown(None);
+        crate::quest_board::clear();
         if self.pick.is_some() {
             picks::clear();
         }

@@ -294,6 +294,11 @@ pub(crate) struct Game {
     countdown: Option<Instant>,
     /// The run's upgrade cards taken, by skill.
     upgrades: upgrade::Upgrades,
+    /// The quest window open on the screen: its board id, the giver, the quest, what for.
+    open_panel: Option<(u64, u64, u32, crate::quest_board::PanelKind)>,
+    /// For a quest text's `$N`, `$C`, `$G`: the character's name, class and gender.
+    name: String,
+    gender: u8,
     /// The test switches' state is in (`$SURVIVOR_QUESTS`), done on the first tick.
     seeded: bool,
     /// The world entry, which the client's movement clock counts from.
@@ -418,6 +423,9 @@ impl Game {
             waves: None,
             countdown: None,
             upgrades: upgrade::Upgrades::default(),
+            open_panel: None,
+            name: c.name.clone(),
+            gender: c.gender,
             walked: false,
             started: now,
             player: Player {
@@ -508,6 +516,7 @@ impl Game {
             self.seed_test_quests();
         }
         self.take_pick_choice();
+        self.take_panel_answer();
         if self.paused() {
             return;
         }

@@ -1,4 +1,4 @@
-// The town barrier: a wall of pale green flame. Strongest at its foot, fading as it rises, its
+// The town barrier: a wall of golden flame. Strongest at its foot, fading as it rises, its
 // tongues licking upward and warping slowly over time. Added onto what is behind it (the
 // material's `AlphaMode::Add`), so the world shows through.
 //
@@ -55,9 +55,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // The seam where the wall meets the ground burns brightest.
     heat = heat + 0.7 * (1.0 - smoothstep(0.0, 0.06, v)) * (0.8 + 0.2 * sin(t * 2.0 + u * 3.0));
 
-    // Deep green at the edges, near white-green at the hottest.
-    let cool = vec3<f32>(0.05, 0.45, 0.18);
-    let hot = vec3<f32>(0.75, 1.0, 0.7);
+    // Deep amber at the edges, pale gold at the hottest.
+    let cool = vec3<f32>(0.45, 0.22, 0.02);
+    let hot = vec3<f32>(1.0, 0.9, 0.55);
     var colour = mix(cool, hot, clamp(heat * 0.9, 0.0, 1.0)) * heat;
     // Up close the wall thins to a veil, so a camera at the barrier still sees the world.
     let near = distance(in.world_position.xyz, view.world_position);

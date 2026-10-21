@@ -24,6 +24,7 @@ use survivor_server::picks::{self, Card, Offer};
 mod barrier;
 mod countdown;
 mod quest_frame;
+mod quest_panel;
 mod haven;
 mod queue;
 mod settings;
@@ -43,7 +44,7 @@ impl Plugin for SurvivorUiPlugin {
             .add_systems(Update, (show_offer, take_card, hover_cards).chain())
             .add_systems(Update, follow_aim)
             .add_systems(Update, preload_library)
-            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin));
+            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin, quest_panel::plugin));
     }
 }
 
@@ -143,6 +144,8 @@ struct Library {
     /// `GlobalStrings.lua`'s templates, which fill a tooltip's numbers ("%d to %d", "%d sec").
     globals: HashMap<String, String>,
     font: Handle<Font>,
+    /// WoW's title face (`MORPHEUS.TTF`), for the quest window's headings.
+    title_font: Handle<Font>,
 }
 
 impl Library {
@@ -158,6 +161,8 @@ impl Library {
         ));
         let font = Font::try_from_bytes(chain.read("Fonts\\FRIZQT__.TTF")?)
             .map_err(|e| anyhow::anyhow!("FRIZQT__.TTF: {e}"))?;
+        let title_font = Font::try_from_bytes(chain.read("Fonts\\MORPHEUS.TTF")?)
+            .map_err(|e| anyhow::anyhow!("MORPHEUS.TTF: {e}"))?;
         Ok(Self {
             chain,
             spells,
@@ -166,6 +171,7 @@ impl Library {
             ranges,
             globals,
             font: fonts.add(font),
+            title_font: fonts.add(title_font),
         })
     }
 
@@ -198,7 +204,11 @@ impl Library {
 
     /// The spell's icon as an image, or `None` when it has none or it does not decode.
     fn icon(&self, spell: &SpellDisplay) -> Option<Image> {
-        let path = spell.icon.as_deref()?;
+        self.blp(spell.icon.as_deref()?)
+    }
+
+    /// An interface texture (`path` without `.blp`) as an image.
+    fn blp(&self, path: &str) -> Option<Image> {
         let bytes = self.chain.read(&format!("{path}.blp")).ok()?;
         let (width, height, pixels) = benilla_formats::blp_to_rgba(&bytes).ok()?;
         Some(Image::new(

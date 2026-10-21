@@ -1,4 +1,4 @@
-//! The safe towns' barriers ([`survivor_server::town::TOWNS`]): a wall of pale green flame around
+//! The safe towns' barriers ([`survivor_server::town::TOWNS`]): a wall of golden flame along
 //! each, strongest where it meets the ground and fading as it rises, its tongues warping slowly
 //! (`shaders/barrier.wgsl`). It glows (additive) rather than tints, so the world behind it stays
 //! clear. Shown while the player is in the world.
@@ -15,8 +15,8 @@ use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 use survivor_server::town::{Town, TOWNS};
 
-/// Segments around a wall.
-const SEGMENTS: usize = 160;
+/// A wall point every this many yards along the outline.
+const STEP: f32 = 1.5;
 /// The wall's height above the ground, and how far below it the foot reaches (a slope between
 /// two samples must not show a gap).
 const TOP: f32 = 12.0;
@@ -81,20 +81,29 @@ fn spawn_walls(
     }
 }
 
-/// An open cylinder round the town whose rings stand on the ground under each segment. Its uv
-/// runs around the wall in flame widths, and from the foot (0) to the top (1).
+/// A wall along the town's outline, standing on the ground under each point. Its uv runs along
+/// the wall in flame widths, and from the foot (0) to the top (1).
 fn wall(town: &Town, ground: &mut Ground) -> Mesh {
-    let around = (std::f32::consts::TAU * town.radius / FLAME_WIDTH).round();
-    // Bevy's (x, z) is WoW's (-y, -x): a segment at angle `a` stands at WoW
-    // (cx - sin a * r, cy - cos a * r).
-    let floor: Vec<f32> = (0..=SEGMENTS)
-        .map(|s| {
-            let a = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-            let (sin, cos) = a.sin_cos();
-            ground
-                .height(town.centre[0] - sin * town.radius, town.centre[1] - cos * town.radius)
-                .unwrap_or(town.ground)
-        })
+    // The outline walked round, a point every [`STEP`] yards, back to the start.
+    let mut path: Vec<([f32; 2], f32)> = Vec::new();
+    let n = town.outline.len();
+    let mut along = 0.0;
+    for i in 0..n {
+        let (p, q) = (town.outline[i], town.outline[(i + 1) % n]);
+        let len = (q[0] - p[0]).hypot(q[1] - p[1]);
+        let steps = (len / STEP).ceil().max(1.0) as usize;
+        for k in 0..steps {
+            let t = k as f32 / steps as f32;
+            path.push(([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t], along + len * t));
+        }
+        along += len;
+    }
+    path.push((town.outline[0], along));
+    // Flame widths that fit the whole way round evenly.
+    let widths = (along / FLAME_WIDTH).round().max(1.0);
+    let floor: Vec<f32> = path
+        .iter()
+        .map(|&([x, y], _)| ground.height(x, y).unwrap_or(town.ground))
         .collect();
     let mut positions = Vec::new();
     let mut normals = Vec::new();
@@ -102,19 +111,21 @@ fn wall(town: &Town, ground: &mut Ground) -> Mesh {
     for ring in 0..=RINGS {
         let up = ring as f32 / RINGS as f32;
         let height = -SINK + up * (TOP + SINK);
-        for (s, &h) in floor.iter().enumerate() {
-            let a = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-            let (sin, cos) = a.sin_cos();
-            positions.push([cos * town.radius, h + height, sin * town.radius]);
-            normals.push([cos, 0.0, sin]);
+        for (&([x, y], d), &h) in path.iter().zip(&floor) {
+            // Bevy's (x, z) is WoW's (-y, -x), from the town's centre.
+            let (bx, bz) = (-(y - town.centre[1]), -(x - town.centre[0]));
+            positions.push([bx, h + height, bz]);
+            let out = Vec2::new(bx, bz).normalize_or_zero();
+            normals.push([out.x, 0.0, out.y]);
             // The ground line is v = 0: the sunk part repeats the seam.
-            uvs.push([s as f32 / SEGMENTS as f32 * around, (height / TOP).max(0.0)]);
+            uvs.push([d / along * widths, (height / TOP).max(0.0)]);
         }
     }
-    let row = SEGMENTS as u32 + 1;
+    let segments = path.len() - 1;
+    let row = segments as u32 + 1;
     let mut indices = Vec::new();
     for ring in 0..RINGS as u32 {
-        for s in 0..SEGMENTS as u32 {
+        for s in 0..segments as u32 {
             let (a, b) = (ring * row + s, ring * row + s + 1);
             let (c, d) = (a + row, b + row);
             indices.extend([a, c, b, b, c, d]);

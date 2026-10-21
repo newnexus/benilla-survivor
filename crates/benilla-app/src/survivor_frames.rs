@@ -14,6 +14,9 @@ pub struct SurvivorFrames {
     pub rects: std::collections::HashMap<String, Rect>,
     /// The watched frames on screen now.
     pub shown: std::collections::HashSet<String>,
+    /// Screen areas (logical px, y down) a crate draws its own window over: a thumb put down
+    /// there neither moves nor turns the character.
+    pub blockers: Vec<Rect>,
     pub run: Vec<String>,
 }
 

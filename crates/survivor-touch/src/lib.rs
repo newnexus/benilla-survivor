@@ -105,8 +105,11 @@ fn read_touches(
             frames.shown.contains(**name)
                 && frames.rects.get(**name).is_some_and(|r| r.contains(t.start_position()))
         });
+        let blocked = frames.blockers.iter().any(|r| r.contains(t.start_position()));
         if let Some(name) = over {
             thumbs.scroll.get_or_insert((t.id(), name));
+        } else if blocked {
+            // Over one of our own windows: it scrolls or clicks itself.
         } else if t.start_position().x < width / 2.0 {
             thumbs.run.get_or_insert(t.id());
         } else {

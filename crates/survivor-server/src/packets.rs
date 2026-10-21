@@ -634,7 +634,8 @@ pub(crate) mod quest {
         b.0
     }
 
-    /// The accept panel.
+    /// The accept panel (the stock one; the survivor shows its own, see `quest_board`).
+    #[allow(dead_code)]
     pub(crate) fn details(npc: u64, q: &Quest) -> Vec<u8> {
         let mut b = Body::new();
         b.u64(npc)
@@ -654,7 +655,8 @@ pub(crate) mod quest {
         b.0
     }
 
-    /// The reward panel of a finished quest.
+    /// The reward panel of a finished quest (the stock one, as `details`).
+    #[allow(dead_code)]
     pub(crate) fn offer_reward(npc: u64, q: &Quest) -> Vec<u8> {
         let mut b = Body::new();
         b.u64(npc)
