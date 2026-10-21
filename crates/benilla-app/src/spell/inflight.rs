@@ -551,7 +551,8 @@ impl SelfCancel<'_> {
             // Cleave 845 and Raptor Strike 2973 ship 0 (Fireball `0xf`). It skips the whole test
             // while the word is up (`0x5150fd`, and `Script::Jump`).
             if esc
-                || (!self.ground.active()
+                || (!super::validator::survivor_cast_while_moving() // survivor
+                    && !self.ground.active()
                     && flags_open(
                         &self.spells,
                         |d| d.interrupt_flags & SPELL_INTERRUPT_MOVEMENT != 0,
@@ -564,7 +565,8 @@ impl SelfCancel<'_> {
         }
         // The channel: movement only, with the player as the mover, and the send only
         // (`0x6e9b70`).
-        if moved && mover_is_player {
+        if moved && mover_is_player && !super::validator::survivor_cast_while_moving() {
+            // survivor: a channel keeps running under the cast-while-moving switch.
             if let Some(spell_id) = self.channel.current(now) {
                 if flags_open(
                     &self.spells,

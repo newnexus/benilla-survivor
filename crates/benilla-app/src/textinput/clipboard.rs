@@ -19,6 +19,7 @@ trait Pasteboard {
     fn name(&self) -> &'static str;
 }
 
+#[cfg(not(target_os = "android"))] // survivor: arboard has no Android backend
 impl Pasteboard for arboard::Clipboard {
     fn read_text(&mut self) -> Result<Option<String>, String> {
         // `ContentNotAvailable` is arboard's empty clipboard, not a failure.
@@ -107,6 +108,20 @@ fn open_wayland(_display: *mut c_void) -> Box<dyn Pasteboard> {
     unreachable!("wayland_display() only yields Some on Wayland-capable platforms")
 }
 
+fn open_arboard() -> Option<Box<dyn Pasteboard>> {
+    // survivor: no clipboard on Android.
+    #[cfg(target_os = "android")]
+    return None;
+    #[cfg(not(target_os = "android"))]
+    match arboard::Clipboard::new() {
+        Ok(clipboard) => Some(Box::new(clipboard)),
+        Err(e) => {
+            warn!("clipboard: unavailable — {e}{}", session_note());
+            None
+        }
+    }
+}
+
 /// The session's display-server variables, appended to the clipboard log lines, since a Linux
 /// paste failure depends on them.
 fn session_note() -> String {
@@ -139,13 +154,7 @@ impl HostClipboard {
         self.opened = true;
         self.backend = match wl_display {
             Some(display) => Some(open_wayland(display)),
-            None => match arboard::Clipboard::new() {
-                Ok(clipboard) => Some(Box::new(clipboard)),
-                Err(e) => {
-                    warn!("clipboard: unavailable — {e}{}", session_note());
-                    None
-                }
-            },
+            None => open_arboard(),
         };
         if let Some(backend) = &self.backend {
             info!("clipboard: {}{}", backend.name(), session_note());

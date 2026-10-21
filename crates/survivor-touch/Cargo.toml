@@ -1,0 +1,14 @@
+[package]
+name = "survivor-touch"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "survivor: touch controls for the phone build, two hidden thumbsticks and tap-to-click"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+benilla-app = { path = "../benilla-app", default-features = false }
+bevy.workspace = true

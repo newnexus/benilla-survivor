@@ -205,6 +205,8 @@ pub use bevy::app::AppExit;
 pub use benilla_protocol::{messages::ObjectType, ObjectFields};
 pub use net::Objects;
 pub use target::Interact;
+pub use target::SurvivorSelect; // survivor
+pub use player::SurvivorTouch; // survivor
 
 /// Builds and runs the client app. `build` is the launcher's compile-time git stamp, passed in as
 /// data so the sha lives in the shim's fingerprint and a commit does not recompile this crate.

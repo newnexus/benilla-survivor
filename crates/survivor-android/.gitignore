@@ -1,0 +1,6 @@
+# Built or machine-local: never committed.
+.gradle/
+build/
+app/build/
+app/src/main/jniLibs/
+local.properties

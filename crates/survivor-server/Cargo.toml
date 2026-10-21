@@ -1,0 +1,16 @@
+[package]
+name = "survivor-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "survivor: the pretend 1.12.1 server the survivor-like plays against, on loopback only"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+benilla-protocol = { path = "../benilla-protocol" }
+benilla-srp = { path = "../benilla-srp" }
+num-bigint = "0.4.6"
+sha1.workspace = true

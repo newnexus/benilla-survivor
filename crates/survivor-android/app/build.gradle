@@ -1,0 +1,45 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "net.newnexus.tirisfallsurvivor"
+    compileSdk 35
+    buildToolsVersion "36.0.0"
+    defaultConfig {
+        applicationId "net.newnexus.tirisfallsurvivor"
+        // AAudio, the sound output, starts at 26.
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "0.1"
+        // Phones are arm64; x86_64 is the PC emulator (build-apk.sh builds one of them).
+        ndk { abiFilters "arm64-v8a", "x86_64" }
+    }
+    buildTypes {
+        // Signed with the debug key: a sideloaded test build, never a store one.
+        release { signingConfig signingConfigs.debug }
+    }
+    // The .so files are built by cargo and copied in (BUILD.md).
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ["src/main/jniLibs"]
+            // The game data, staged by build-apk.sh.
+            assets.srcDirs = ["build/survivor-assets"]
+        }
+    }
+    // Stored, not zipped: the archive is already compressed inside.
+    androidResources { noCompress += ["MPQ", "tsv"] }
+    packaging { jniLibs { useLegacyPackaging true } }
+}
+
+dependencies {
+    // Must match the GameActivity the Rust side was built against (android-activity 0.6).
+    implementation "androidx.games:games-activity:4.4.0"
+    implementation "androidx.appcompat:appcompat:1.7.0"
+}
+
+// appcompat and games-activity pull two Kotlin standard libraries; take one.
+dependencies {
+    implementation platform("org.jetbrains.kotlin:kotlin-bom:1.8.22")
+}

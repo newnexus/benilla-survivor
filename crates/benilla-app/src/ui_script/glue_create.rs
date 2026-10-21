@@ -99,9 +99,13 @@ pub(crate) fn create_catalog(
     let Some(factions) = factions else {
         return catalog;
     };
+    // survivor: `$SURVIVOR_RACE=<ChrRaces id>` lists that race alone; the survivor launcher sets it.
+    let only_race: Option<u32> = std::env::var("SURVIVOR_RACE")
+        .ok()
+        .and_then(|v| v.parse().ok());
     for side in ["Alliance", "Horde"] {
         for row in create.race_rows() {
-            if row.flags & 0x1 != 0 {
+            if row.flags & 0x1 != 0 || only_race.is_some_and(|r| u32::from(row.id) != r) {
                 continue;
             }
             let Some(template) = factions.template(row.faction) else {

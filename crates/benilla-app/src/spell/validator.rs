@@ -194,6 +194,13 @@ pub(super) fn cast_water_refusal(move_flags_word: u32, spell: Option<&SpellDispl
     None
 }
 
+// survivor: `$SURVIVOR_CAST_WHILE_MOVING` (set by the survivor launcher) lets every cast start
+// and run while the player moves: no moving refusal, no move cancel of a cast or a channel.
+pub(crate) fn survivor_cast_while_moving() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("SURVIVOR_CAST_WHILE_MOVING").is_some())
+}
+
 /// The MOVING|TURNING interrupt bits, tested on both `AuraInterruptFlags` (+0x58) and
 /// `ChannelInterruptFlags` (+0x5c) (`0x609e0e`/`0x609e1c`).
 const AURA_INTERRUPT_MOVING_TURNING: u32 = 0x18;
@@ -218,6 +225,9 @@ pub(super) fn cast_moving_refusal(
     spell: Option<&SpellDisplay>,
 ) -> bool {
     use crate::creature_anim::move_flags;
+    if survivor_cast_while_moving() {
+        return false;
+    }
     // `0x200f`: ANY_MOVE (0xf) | FALLING (0x2000), the wire layout.
     const MOVING_MASK: u32 = move_flags::ANY_MOVE | move_flags::FALLING;
     let Some(d) = spell else { return false };

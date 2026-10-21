@@ -22,8 +22,6 @@ bevy_dynamic_linking = ["bevy/dynamic_linking"]
 
 [dependencies]
 anyhow.workspace = true
-# The EditBox clipboard, on the main thread as NSPasteboard requires; bevy_egui's 3.x.
-arboard = "3"
 benilla-ui = { path = "../benilla-ui" }
 bevy.workspace = true
 wgpu.workspace = true
@@ -46,7 +44,6 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # The "no WoW install" error dialog (`no_install`): AppKit, Win32 and, on Linux, `zenity`; no GTK.
 # `xdg-portal` is the Linux backend that carries the message dialog; `wayland` is its file-dialog
 # parent handle, which a message dialog without a parent never reads.
-rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 # Thread-to-ECS channels: crossbeam's `Receiver` is `Sync`, so it is a resource without a mutex.
 crossbeam-channel = "0.5"
 benilla-assets = { path = "../benilla-assets", default-features = false }
@@ -139,3 +136,10 @@ naga = { version = "27.0.3", features = ["msl-out"] }
 
 [target.'cfg(not(target_os = "macos"))'.dev-dependencies]
 naga = { version = "27.0.3", features = ["spv-out"] }
+
+# survivor: no desktop dialog on Android (rfd has no Android backend); the message goes to the log.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+# The EditBox clipboard, on the main thread as NSPasteboard requires; bevy_egui's 3.x.
+# survivor: no Android backend either.
+arboard = "3"
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }

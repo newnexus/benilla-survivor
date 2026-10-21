@@ -79,6 +79,7 @@ pub(crate) use by_name::SelectCommit;
 pub(crate) use ring::{ring_variant, PlayerPath, SelectorInput};
 pub(crate) use ring::{selection_variant, Factions, RingVariant};
 
+pub use by_name::SurvivorSelect; // survivor
 pub use click::Interact;
 pub(crate) use click::{clear_selection_on_world_teardown, deselect_on_ui_shutdown, DeselectGuid};
 
@@ -304,6 +305,7 @@ impl Plugin for TargetPlugin {
             .add_message::<AttackNearestRequest>()
             .add_message::<TargetByNameRequest>()
             .add_message::<AssistRequest>()
+            .add_message::<SurvivorSelect>() // survivor
             .add_message::<click::DeselectGuid>()
             .add_message::<click::PlateRightClick>()
             .add_message::<Interact>()
@@ -366,6 +368,7 @@ impl Plugin for TargetPlugin {
                     (
                         by_name::target_by_name_requests,
                         by_name::assist_requests,
+                        by_name::survivor_select_requests, // survivor
                         // After the pet bar's and pet book's drains, which write `PetBar`. The
                         // two commute: the `FollowUnit` resolver reads only the pet's guid
                         // (`spells.pet_guid`), which neither writes; the order keeps them declared.

@@ -119,7 +119,11 @@ impl Chain {
     /// The highest-priority archive with an entry for `name`, a delete marker included, as a
     /// tombstone shadows every lower copy: check [`Archive::is_delete_marker`] for a readable file.
     fn resolve(&self, name: &str) -> Option<&Archive> {
-        self.archives.iter().rev().find(|a| a.contains(name))
+        let found = self.archives.iter().rev().find(|a| a.contains(name));
+        if found.is_some() {
+            survivor_read_log(name); // survivor: see `survivor_read_log`
+        }
+        found
     }
 
     /// Whether `name` (`/` or `\`, any case) is a readable file, not a delete marker.
@@ -221,6 +225,28 @@ impl Chain {
             }
         }
         out
+    }
+}
+
+// survivor: `$SURVIVOR_READ_LOG=<file>` appends every path the chain serves, one per line, for
+// survivor-pack's list of the files a trimmed install must carry. Off unless set.
+fn survivor_read_log(name: &str) {
+    use std::io::Write;
+    static LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
+        std::sync::OnceLock::new();
+    let log = LOG.get_or_init(|| {
+        let path = std::env::var_os("SURVIVOR_READ_LOG")?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()?;
+        Some(std::sync::Mutex::new(file))
+    });
+    if let Some(file) = log {
+        if let Ok(mut f) = file.lock() {
+            let _ = writeln!(f, "{name}");
+        }
     }
 }
 

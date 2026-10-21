@@ -1,0 +1,18 @@
+[package]
+name = "survivor-pack"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "survivor: trims a 1.12.1 install to the files the survivor-like reads, as one patch.MPQ"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+benilla-formats = { path = "../benilla-formats", default-features = false }
+flate2 = "1.0"
+
+[dev-dependencies]
+benilla-mpq = { path = "../benilla-mpq" }

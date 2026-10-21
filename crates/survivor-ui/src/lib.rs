@@ -1,0 +1,499 @@
+//! The survivor-like's own screens, drawn by Bevy over the benilla client. For now one: the
+//! level-up pick, three cards side by side over the dimmed, paused world. A card is taken with a
+//! click or the 1-3 keys, and the answer goes back to the in-process server through
+//! [`survivor_server::picks`].
+//!
+//! The cards read the client's own data: each spell's name, rank, icon and tooltip text come
+//! from `Spell.dbc` and `SpellIcon.dbc` in the install, and the text is in the game's font.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use anyhow::{Context, Result};
+use benilla_formats::{
+    load_spell_catalog, load_spell_durations, load_spell_radii, load_spell_ranges, substitute,
+    SpellCatalog, SpellDisplay, SpellDurationCatalog, SpellRadiusCatalog, SpellRangeCatalog,
+    TokenContext, TokenNumber,
+};
+use benilla_formats::Chain;
+use bevy::asset::RenderAssetUsages;
+use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use survivor_server::picks::{self, Card, Offer};
+
+/// The level-up screen.
+pub struct SurvivorUiPlugin;
+
+impl Plugin for SurvivorUiPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Screen>()
+            .add_systems(Update, (show_offer, take_card, hover_cards).chain())
+            .add_systems(Update, follow_aim);
+    }
+}
+
+/// Select the server's auto-target in the client whenever it changes, so the target frame shows
+/// it and the action bar's spells have something to cast at.
+fn follow_aim(mut last: Local<Option<u64>>, mut select: MessageWriter<benilla_app::SurvivorSelect>) {
+    let aim = survivor_server::aim::current();
+    if aim != *last {
+        *last = aim;
+        if let Some(guid) = aim {
+            select.write(benilla_app::SurvivorSelect { guid });
+        }
+    }
+}
+
+/// Seconds the level-up flash (`Spells\LevelUp\LevelUp.mdx`, a 1.87 s clip) plays before the
+/// cards come up.
+const DING_HOLD: f32 = 1.9;
+
+/// When the offer on its way first appeared, and when the last one closed.
+#[derive(Default)]
+struct Ding {
+    since: Option<(u64, f32)>,
+    closed: f32,
+}
+
+/// Above the world and the game's interface; below benilla's loading cover (1000).
+const SCREEN_Z: i32 = 950;
+const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
+const CARD_BG: Color = Color::srgba(0.07, 0.06, 0.05, 0.96);
+const CARD_BG_HOVER: Color = Color::srgba(0.16, 0.13, 0.08, 0.98);
+const CARD_EDGE: Color = Color::srgb(0.55, 0.43, 0.18);
+const NEW_GREEN: Color = Color::srgb(0.35, 1.0, 0.35);
+const UPGRADE_BLUE: Color = Color::srgb(0.45, 0.75, 1.0);
+const TEXT: Color = Color::srgb(0.93, 0.89, 0.78);
+const MUTED: Color = Color::srgb(0.6, 0.6, 0.6);
+
+/// What the screen is showing, and the data it draws from, read once on the first level-up.
+#[derive(Resource, Default)]
+struct Screen {
+    /// The offer on screen, the window height it was laid out for, and its root node.
+    shown: Option<(u64, f32, Entity)>,
+    /// The offer already answered: it stays hidden while the server takes the answer.
+    answered: Option<u64>,
+    library: Option<Mutex<Library>>,
+    /// The library failed to load; said once, then the screen stays off.
+    broken: bool,
+}
+
+/// The cards on screen, in order, for the keys and the clicks.
+#[derive(Component)]
+struct CardButton {
+    offer: u64,
+    spell: u32,
+    /// Its place on screen, 0-2: the key that takes it.
+    index: usize,
+}
+
+#[derive(Component)]
+struct ScreenRoot;
+
+/// The install's spell tables and the game font.
+struct Library {
+    chain: Chain,
+    spells: SpellCatalog,
+    durations: SpellDurationCatalog,
+    radii: SpellRadiusCatalog,
+    ranges: SpellRangeCatalog,
+    /// `GlobalStrings.lua`'s templates, which fill a tooltip's numbers ("%d to %d", "%d sec").
+    globals: HashMap<String, String>,
+    font: Handle<Font>,
+}
+
+impl Library {
+    fn load(fonts: &mut Assets<Font>) -> Result<Self> {
+        let data = benilla_formats::wow_data().context("no WoW Data folder found")?;
+        let mut chain = Chain::open(&data)?;
+        let spells = load_spell_catalog(&mut chain)?;
+        let durations = load_spell_durations(&mut chain)?;
+        let radii = load_spell_radii(&mut chain)?;
+        let ranges = load_spell_ranges(&mut chain)?;
+        let globals = global_strings(&String::from_utf8_lossy(
+            &chain.read("Interface\\FrameXML\\GlobalStrings.lua")?,
+        ));
+        let font = Font::try_from_bytes(chain.read("Fonts\\FRIZQT__.TTF")?)
+            .map_err(|e| anyhow::anyhow!("FRIZQT__.TTF: {e}"))?;
+        Ok(Self {
+            chain,
+            spells,
+            durations,
+            radii,
+            ranges,
+            globals,
+            font: fonts.add(font),
+        })
+    }
+
+    /// The spell's tooltip text with its `$` numbers filled in.
+    fn description(&self, spell: &SpellDisplay) -> String {
+        let Some(text) = spell.description.as_deref().filter(|t| !t.is_empty()) else {
+            return String::new();
+        };
+        let skill = |_: u32| 0;
+        let lookup = |id: u32| self.spells.get(id);
+        let gender = || 0u8;
+        let home_area = || None;
+        let global = |key: &str| self.globals.get(key).cloned();
+        let printf = |t: &str, n: &[TokenNumber]| printf(t, n);
+        let ctx = TokenContext {
+            durations: &self.durations,
+            radii: &self.radii,
+            ranges: Some(&self.ranges),
+            skill: &skill,
+            lookup: &lookup,
+            mods: None,
+            unmodified_points: false,
+            gender: &gender,
+            home_area: &home_area,
+            global: &global,
+            printf: &printf,
+        };
+        substitute(text, spell, &ctx)
+    }
+
+    /// The spell's icon as an image, or `None` when it has none or it does not decode.
+    fn icon(&self, spell: &SpellDisplay) -> Option<Image> {
+        let path = spell.icon.as_deref()?;
+        let bytes = self.chain.read(&format!("{path}.blp")).ok()?;
+        let (width, height, pixels) = benilla_formats::blp_to_rgba(&bytes).ok()?;
+        Some(Image::new(
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels,
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::default(),
+        ))
+    }
+}
+
+/// `KEY = "value";` lines of `GlobalStrings.lua`.
+fn global_strings(lua: &str) -> HashMap<String, String> {
+    lua.lines()
+        .filter_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            let value = value.trim().trim_end_matches(';').trim();
+            let value = value.strip_prefix('"')?.strip_suffix('"')?;
+            Some((key.trim().to_owned(), value.replace("\\\"", "\"")))
+        })
+        .collect()
+}
+
+/// A `GlobalStrings` template's `%` holes filled in order: `%d`, `%.Nf` and `%%`.
+fn printf(template: &str, numbers: &[TokenNumber]) -> String {
+    let mut out = String::new();
+    let mut numbers = numbers.iter();
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        // Flags and width are skipped; the precision is kept for floats.
+        let mut spec = String::new();
+        let mut precision = String::new();
+        let mut after_dot = false;
+        while let Some(&n) = chars.peek() {
+            chars.next();
+            if n.is_ascii_alphabetic() || n == '%' {
+                spec.push(n);
+                break;
+            }
+            if n == '.' {
+                after_dot = true;
+            } else if after_dot && n.is_ascii_digit() {
+                precision.push(n);
+            }
+        }
+        if spec == "%" {
+            out.push('%');
+            continue;
+        }
+        let places = precision.parse().unwrap_or(6);
+        match numbers.next() {
+            Some(TokenNumber::Int(i)) => out.push_str(&i.to_string()),
+            Some(TokenNumber::Float(f)) => out.push_str(&format!("{f:.places$}")),
+            None => {}
+        }
+    }
+    out
+}
+
+/// The number in "Rank N".
+fn rank_number(spell: &SpellDisplay) -> Option<u32> {
+    spell.rank.as_deref()?.strip_prefix("Rank ")?.trim().parse().ok()
+}
+
+/// Put the server's offer on screen, or take it off when there is none.
+fn show_offer(
+    mut commands: Commands,
+    mut screen: ResMut<Screen>,
+    mut fonts: ResMut<Assets<Font>>,
+    mut images: ResMut<Assets<Image>>,
+    window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    time: Res<Time<Real>>,
+    mut ding: Local<Ding>,
+) {
+    let offer = picks::offer().filter(|o| screen.answered != Some(o.id));
+    // The world is already frozen; the cards wait while WoW's own level-up flash plays on the
+    // player. A second pick straight after the first shows at once.
+    let now = time.elapsed_secs();
+    match &offer {
+        Some(o) if screen.shown.is_none() => {
+            let since = *ding.since.get_or_insert((o.id, now));
+            if since.0 == o.id && now - since.1 < DING_HOLD && now - ding.closed > 0.5 {
+                return;
+            }
+        }
+        Some(_) => {}
+        None => {
+            if ding.since.take().is_some() {
+                ding.closed = now;
+            }
+        }
+    }
+    // Text sizes are pixels, so a resized window lays the screen out again.
+    let height = window.single().map_or(720.0, Window::height);
+    let wanted = offer.as_ref().map(|o| (o.id, height));
+    if wanted == screen.shown.map(|s| (s.0, s.1)) {
+        return;
+    }
+    if let Some((_, _, root)) = screen.shown.take() {
+        commands.entity(root).despawn();
+    }
+    let Some(offer) = offer else { return };
+    if screen.library.is_none() && !screen.broken {
+        match Library::load(&mut fonts) {
+            Ok(l) => screen.library = Some(Mutex::new(l)),
+            Err(e) => {
+                error!("survivor-ui: the level-up screen cannot read the game data: {e:#}");
+                screen.broken = true;
+            }
+        }
+    }
+    let Some(library) = &screen.library else { return };
+    let library = library.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vh = height / 100.0;
+    let root = spawn_screen(&mut commands, &library, &mut images, &offer, vh);
+    drop(library);
+    screen.shown = Some((offer.id, height, root));
+}
+
+fn text(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    (
+        Text::new(s),
+        TextFont {
+            font: font.clone(),
+            font_size: size,
+            ..default()
+        },
+        TextColor(color),
+        TextLayout::new_with_justify(Justify::Center),
+    )
+}
+
+/// The dimmed backdrop, the title and the cards.
+fn spawn_screen(
+    commands: &mut Commands,
+    library: &Library,
+    images: &mut Assets<Image>,
+    offer: &Offer,
+    vh: f32,
+) -> Entity {
+    let font = &library.font;
+    commands
+        .spawn((
+            ScreenRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                row_gap: Val::Vh(1.5),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.62)),
+            GlobalZIndex(SCREEN_Z),
+        ))
+        .with_children(|root| {
+            root.spawn(text(
+                font,
+                format!("LEVEL UP!  {} -> {}", offer.level.saturating_sub(1), offer.level),
+                9.0 * vh,
+                GOLD,
+            ));
+            root.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Vh(3.0),
+                margin: UiRect::top(Val::Vh(2.0)),
+                ..default()
+            })
+            .with_children(|row| {
+                for (i, card) in offer.cards.iter().enumerate() {
+                    spawn_card(row, library, images, offer.id, i, card, vh);
+                }
+            });
+        })
+        .id()
+}
+
+fn spawn_card(
+    row: &mut ChildSpawnerCommands,
+    library: &Library,
+    images: &mut Assets<Image>,
+    offer: u64,
+    index: usize,
+    card: &Card,
+    vh: f32,
+) {
+    let font = &library.font;
+    let spell = library.spells.get(card.spell);
+    let name = spell.map_or_else(|| format!("Spell {}", card.spell), |s| s.name.clone());
+    let (tag, tag_color) = match (card.replaces, spell.and_then(rank_number)) {
+        (Some(_), Some(rank)) => (format!("UPGRADE  Rank {} > {}", rank - 1, rank), UPGRADE_BLUE),
+        (Some(_), None) => ("UPGRADE".to_owned(), UPGRADE_BLUE),
+        (None, _) => ("NEW!".to_owned(), NEW_GREEN),
+    };
+    let kind = if card.defensive { "Defensive" } else { "Damage" };
+    let description = spell.map(|s| library.description(s)).unwrap_or_default();
+    let icon = spell.and_then(|s| library.icon(s)).map(|i| images.add(i));
+    row.spawn((
+        CardButton {
+            offer,
+            spell: card.spell,
+            index,
+        },
+        Button,
+        Node {
+            // Half the height wide and 70% of it tall; a narrow window caps the width so the
+            // three still fit side by side.
+            width: Val::Vh(52.0),
+            max_width: Val::Vw(31.0),
+            min_height: Val::Vh(70.0),
+            padding: UiRect::all(Val::Vh(2.5)),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: Val::Vh(1.0),
+            border: UiRect::all(Val::Vh(0.4)),
+            border_radius: BorderRadius::all(Val::Vh(1.4)),
+            ..default()
+        },
+        BackgroundColor(CARD_BG),
+        BorderColor::all(CARD_EDGE),
+    ))
+    .with_children(|c| {
+        c.spawn(Node {
+            width: Val::Vh(15.0),
+            height: Val::Vh(15.0),
+            margin: UiRect::vertical(Val::Vh(1.5)),
+            border: UiRect::all(Val::Vh(0.3)),
+            ..default()
+        })
+        .insert(BorderColor::all(CARD_EDGE))
+        .with_children(|frame| {
+            if let Some(icon) = icon {
+                frame.spawn((
+                    ImageNode::new(icon),
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                ));
+            }
+        });
+        c.spawn(text(font, name, 4.0 * vh, Color::WHITE));
+        c.spawn(text(font, tag, 2.5 * vh, tag_color));
+        c.spawn(text(font, kind, 2.2 * vh, MUTED));
+        c.spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Vh(0.15),
+                margin: UiRect::vertical(Val::Vh(1.0)),
+                ..default()
+            },
+            BackgroundColor(CARD_EDGE),
+        ));
+        c.spawn((
+            text(font, description, 2.7 * vh, TEXT),
+            Node {
+                width: Val::Percent(100.0),
+                flex_grow: 1.0,
+                ..default()
+            },
+        ));
+        c.spawn(text(font, format!("[ {} ]", index + 1), 3.2 * vh, GOLD));
+    });
+}
+
+/// A click on a card, or its number key, answers the offer.
+fn take_card(
+    mut screen: ResMut<Screen>,
+    keys: Res<ButtonInput<KeyCode>>,
+    cards: Query<(&CardButton, &Interaction)>,
+) {
+    if screen.shown.is_none() {
+        return;
+    }
+    const KEYS: [[KeyCode; 2]; 3] = [
+        [KeyCode::Digit1, KeyCode::Numpad1],
+        [KeyCode::Digit2, KeyCode::Numpad2],
+        [KeyCode::Digit3, KeyCode::Numpad3],
+    ];
+    let pressed_key = KEYS.iter().position(|k| keys.any_just_pressed(*k));
+    // By each card's own index: a query's order is not the order on screen.
+    let picked = cards
+        .iter()
+        .find(|(card, interaction)| {
+            **interaction == Interaction::Pressed || pressed_key == Some(card.index)
+        })
+        .map(|(card, _)| (card.offer, card.spell));
+    if let Some((offer, spell)) = picked {
+        info!("survivor-ui: took spell {spell} from offer {offer}");
+        picks::choose(offer, spell);
+        screen.answered = Some(offer);
+    }
+}
+
+/// The card under the cursor lights up.
+fn hover_cards(
+    mut cards: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (With<CardButton>, Changed<Interaction>),
+    >,
+) {
+    for (interaction, mut bg, mut edge) in &mut cards {
+        let lit = *interaction != Interaction::None;
+        bg.0 = if lit { CARD_BG_HOVER } else { CARD_BG };
+        *edge = BorderColor::all(if lit { GOLD } else { CARD_EDGE });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn printf_fills_holes_in_order() {
+        assert_eq!(
+            printf("%d sec, %.1f yd, 100%%", &[TokenNumber::Int(30), TokenNumber::Float(2.5)]),
+            "30 sec, 2.5 yd, 100%"
+        );
+    }
+
+    #[test]
+    fn global_strings_read_key_and_value() {
+        let g = global_strings(
+            "INT_SPELL_POINTS_SPREAD_TEMPLATE = \"%d to %d\";\nSAY = \"say \\\"hi\\\"\";",
+        );
+        assert_eq!(g["INT_SPELL_POINTS_SPREAD_TEMPLATE"], "%d to %d");
+        assert_eq!(g["SAY"], "say \"hi\"");
+    }
+}

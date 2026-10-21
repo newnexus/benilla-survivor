@@ -84,6 +84,23 @@ pub(crate) struct TargetByNameRequest {
     pub(crate) name: String,
 }
 
+// survivor: a crate on top of benilla selects a unit by guid, as a click on it would (the
+// survivor-like's server-side auto-target, shown in the target frame and read by the action bar).
+#[derive(bevy::ecs::message::Message, Clone, Copy, Debug)]
+pub struct SurvivorSelect {
+    pub guid: u64,
+}
+
+// survivor: drain [`SurvivorSelect`] through the one SetSelection path.
+pub(super) fn survivor_select_requests(
+    mut requests: MessageReader<SurvivorSelect>,
+    mut commit: SelectCommit,
+) {
+    for request in requests.read() {
+        commit.select_unit(request.guid);
+    }
+}
+
 /// `/assist [name]`: select the basis unit's target (`AssistByName`, or bare
 /// `AssistUnit("target")`, whose basis is the current selection).
 #[derive(bevy::ecs::message::Message, Clone, Debug)]

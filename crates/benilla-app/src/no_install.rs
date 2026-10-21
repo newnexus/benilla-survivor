@@ -72,7 +72,10 @@ fn message(looked_in: &[PathBuf]) -> String {
 /// Report `err` and end the boot with a failing exit: stderr always, the dialog too unless the run
 /// is `unattended`, so an instrumented run never waits on a click.
 pub(crate) fn fail(err: &NoInstall, unattended: bool) -> AppExit {
+    let _ = unattended; // survivor: unread on Android
     eprintln!("benilla: {}", err.message());
+    // survivor: Android has no dialog backend; stderr carries it.
+    #[cfg(not(target_os = "android"))]
     if !unattended {
         // Linux shows it through `zenity` and logs nothing when that is missing, which stderr covers.
         rfd::MessageDialog::new()
