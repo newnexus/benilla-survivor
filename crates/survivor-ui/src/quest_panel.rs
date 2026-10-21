@@ -37,7 +37,7 @@ struct StoryScroll;
 
 /// A part of the window a thumb must not walk through.
 #[derive(Component)]
-struct Sheet;
+pub(crate) struct Sheet;
 
 #[derive(Component)]
 struct PanelButton {
@@ -229,6 +229,7 @@ fn spawn_panel(
                 }
                 col.spawn(sheet(Node::default())).with_children(|r| {
                     r.spawn(text("Rewards", title_font, 5.0, HEADING));
+                    if panel.money > 0 {
                     r.spawn(Node {
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
@@ -259,6 +260,7 @@ fn spawn_panel(
                             }
                         }
                     });
+                    }
                     if panel.xp > 0 {
                         r.spawn(text(&format!("Experience: {}", panel.xp), font, 3.3, INK));
                     }
@@ -361,7 +363,7 @@ fn scroll_text(
 }
 
 /// Tell the touch controls where the window is, so a thumb on it moves no one.
-fn block_touch(
+pub(crate) fn block_touch(
     sheets: Query<(&ComputedNode, &UiGlobalTransform), With<Sheet>>,
     mut frames: ResMut<benilla_app::SurvivorFrames>,
 ) {
@@ -375,7 +377,7 @@ fn block_touch(
 }
 
 /// A sheet of parchment: warm paper with mottling, darker and burnt toward its edges.
-fn parchment() -> Image {
+pub(crate) fn parchment() -> Image {
     const W: usize = 256;
     const H: usize = 256;
     let hash = |x: i32, y: i32| {

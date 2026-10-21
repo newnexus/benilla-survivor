@@ -20,9 +20,11 @@ mod meal;
 mod pick;
 mod quest;
 mod rotation;
+mod save;
 mod spawner;
 mod town;
 mod upgrade;
+pub(crate) use gear::ARMORY_ENTRY;
 pub(crate) use meal::PackItem;
 
 /// Creatures keep this share of their 1.12 health.
@@ -310,7 +312,17 @@ pub(crate) struct Game {
     chest_loot: Vec<Vec<gear::GearItem>>,
     /// Chest gear worn this run, by equipment slot, and what the player has brought home.
     run_gear: gear::RunGear,
-    collection: Vec<gear::GearItem>,
+    collection: Vec<gear::OwnedItem>,
+    /// What the player wears from the collection, by slot, and the next owned item's id.
+    loadout: std::collections::HashMap<u16, u64>,
+    next_owned: u64,
+    /// Items seen in chests, by entry, at their best rarity.
+    seen: std::collections::HashMap<u32, u8>,
+    /// The collection chest's window on screen (its board id), closed by its X until the player
+    /// walks off, and which towns' chests the client has.
+    armory_open: Option<u64>,
+    armory_closed: bool,
+    armory_shown: HashSet<usize>,
     /// The starting gear's look per equipment slot, and its weapon: what a run ends back in.
     start_visible: std::collections::HashMap<u16, u32>,
     start_weapon: (f32, f32, Duration),
@@ -460,6 +472,12 @@ impl Game {
             chest_loot: Vec::new(),
             run_gear: gear::RunGear::default(),
             collection: Vec::new(),
+            loadout: std::collections::HashMap::new(),
+            next_owned: 1,
+            seen: std::collections::HashMap::new(),
+            armory_open: None,
+            armory_closed: false,
+            armory_shown: HashSet::new(),
             start_visible,
             start_weapon: weapon,
             run_speed: 7.0,
@@ -501,6 +519,7 @@ impl Game {
             rng,
         };
         game.start_spells = game.player.spells.clone();
+        game.load();
         game.reset_chests();
         if game.in_run() {
             game.waves = Some(game.new_waves(now));
@@ -553,9 +572,11 @@ impl Game {
         if !self.seeded {
             self.seeded = true;
             self.seed_test_quests();
+            self.after_login();
         }
         self.take_pick_choice();
         self.take_panel_answer();
+        self.take_armory_action();
         if self.paused() {
             return;
         }
@@ -564,7 +585,9 @@ impl Game {
         self.check_barrier(now);
         self.update_visibility(now);
         self.update_chests();
+        self.update_armory_chests();
         self.open_nearby_chest(now);
+        self.open_armory_nearby();
         self.walk_beats(now);
         self.guard_posts(now);
         self.update_npcs(now);

@@ -20,6 +20,8 @@ pub struct Town {
     /// little above the ground: the client settles the player onto it.
     pub arrive: [f32; 3],
     pub arrive_facing: f32,
+    /// The collection chest: where it stands and which way it faces.
+    pub armory: [f32; 4],
     /// Where the roads cross the barrier, as angles from the centre (`atan2(dy, dx)`, WoW's
     /// facing convention): four guards stand just outside each.
     pub entrances: &'static [f32],
@@ -45,6 +47,8 @@ pub const TOWNS: &[Town] = &[
         // The road from the crypt (where Deathguard Oliver's patrol turns), and the road out to
         // the rest of Tirisfall past Deathguard Phillip's.
         entrances: &[3.11, -0.33],
+        // Beside Harold Raims, the vendor, clear of the quest givers.
+        armory: [1838.6, 1571.4, 96.6, 0.8],
     },
     Town {
         name: "Brill",
@@ -61,6 +65,8 @@ pub const TOWNS: &[Town] = &[
         arrive: [2272.0, 300.0, 38.0],
         arrive_facing: 3.1,
         entrances: &[],
+        // In the Gallows' End Tavern, beside Innkeeper Renee.
+        armory: [2267.4, 243.0, 34.34, 0.6],
     },
 ];
 

@@ -143,7 +143,12 @@ impl Game {
 
     /// In town, a quest giver within reach speaks up once, until the player walks off.
     pub(super) fn talk_nearby(&mut self, now: std::time::Instant) {
-        if self.in_run() || self.player.dead_until.is_some() || self.paused() || !self.walked {
+        if self.in_run()
+            || self.player.dead_until.is_some()
+            || self.paused()
+            || !self.walked
+            || self.armory_open.is_some()
+        {
             return;
         }
         let me = self.player.pos;
@@ -318,6 +323,7 @@ impl Game {
         self.send(opcode::SMSG_QUESTGIVER_QUEST_COMPLETE, &quest::complete(&q, q.xp));
         self.grant_meta_xp(q.xp);
         self.send_giver_statuses();
+        self.save();
         // The next of the chain, or another finished quest, straight away.
         self.quest_hello(guid);
     }
@@ -360,6 +366,17 @@ impl Game {
             }
             self.write_slot(slot);
         }
+    }
+
+    /// The quests handed in, for the save file.
+    pub(super) fn quests_done(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.quests.done.iter().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
+    pub(super) fn set_quests_done(&mut self, ids: impl Iterator<Item = u32>) {
+        self.quests.done.extend(ids);
     }
 
     /// `$SURVIVOR_QUESTS=364,380`: in the log from the start, for trying a quest's kills

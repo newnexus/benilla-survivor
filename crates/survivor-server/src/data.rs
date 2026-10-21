@@ -335,6 +335,16 @@ impl WorldData {
                 rotation: [num(r.get(9)), num(r.get(10)), num(r.get(11)), num(r.get(12))],
             });
         }
+        // The collection chest, the server's own object, in the battered chest's look.
+        d.chest_templates.insert(
+            crate::game::ARMORY_ENTRY,
+            ChestTemplate {
+                entry: crate::game::ARMORY_ENTRY,
+                name: "Collection Chest".to_owned(),
+                display: 259,
+                size: 1.5,
+            },
+        );
         for r in rows(&dir, "gear.tsv") {
             d.gear.push((num(r.first()), num(r.get(1))));
         }

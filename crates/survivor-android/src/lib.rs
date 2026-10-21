@@ -29,6 +29,7 @@ fn main() {
         std::env::set_var("SURVIVOR_DATA", files.join("Data").join("survivor"));
         // Settings beside the data: the default, beside the executable, is a system folder.
         std::env::set_var("BENILLA_HOME", files.join("benilla-config"));
+        std::env::set_var("SURVIVOR_SAVE_DIR", files.join("benilla-config").join("survivor-saves"));
     }
     // Read by the server as it starts: its one character.
     std::env::set_var("SURVIVOR_SEED", NAME);

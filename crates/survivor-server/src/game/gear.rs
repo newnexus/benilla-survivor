@@ -51,6 +51,15 @@ pub(crate) enum GearStat {
 }
 
 impl GearStat {
+    /// Its place in [`ALL_STATS`], for the save file.
+    pub(crate) fn index(self) -> usize {
+        ALL_STATS.iter().position(|&s| s == self).unwrap_or(0)
+    }
+
+    pub(crate) fn from_index(i: usize) -> Option<Self> {
+        ALL_STATS.get(i).copied()
+    }
+
     /// A common item's amount (a share, 0.05 = 5%).
     fn base(self) -> f32 {
         match self {
@@ -117,9 +126,46 @@ pub(crate) struct GearItem {
     /// Its stats at no upgrades.
     stats: Vec<(GearStat, f32)>,
     pub(crate) upgrades: u32,
+    /// The collection item it is, when worn from the collection.
+    pub(crate) owned: Option<u64>,
 }
 
+/// An item in the collection.
+#[derive(Clone, Debug)]
+pub(crate) struct OwnedItem {
+    pub(crate) id: u64,
+    pub(crate) item: GearItem,
+    pub(crate) favourite: bool,
+}
+
+/// The slots the collection chest has tabs for, in order.
+const ARMORY_SLOTS: [u16; 12] = [0, 2, 4, 5, 6, 7, 8, 9, 14, 15, 16, 17];
+/// How close the player stands to open the collection chest, and how far to walk off to close it.
+const ARMORY_RANGE: f32 = 3.5;
+const ARMORY_RESET: f32 = 7.0;
+
 impl GearItem {
+    /// An item read back from the save file.
+    pub(crate) fn restored(
+        entry: u32,
+        rarity: u8,
+        stats: Vec<(GearStat, f32)>,
+        upgrades: u32,
+        id: u64,
+    ) -> Self {
+        Self {
+            entry,
+            rarity,
+            stats,
+            upgrades,
+            owned: Some(id),
+        }
+    }
+
+    pub(crate) fn stats(&self) -> &[(GearStat, f32)] {
+        &self.stats
+    }
+
     fn stat_values(&self) -> impl Iterator<Item = (GearStat, f32)> + '_ {
         let k = 1.0 + UPGRADE_STEP * self.upgrades as f32;
         self.stats.iter().map(move |&(s, x)| (s, x * k))
@@ -233,7 +279,16 @@ impl Game {
             rarity,
             stats,
             upgrades: 0,
+            owned: None,
         }
+    }
+
+    /// The equipment slot `entry` goes in.
+    pub(super) fn slot_of_item(&self, entry: u32) -> Option<u16> {
+        self.data
+            .items
+            .get(&entry)
+            .and_then(|t| super::super::world::equip_slot(t.inventory_type))
     }
 
     /// Tell the screen where the closed chests are and how good their best item is.
@@ -243,14 +298,24 @@ impl Game {
             .iter()
             .zip(&self.chest_loot)
             .filter(|(c, _)| !c.is_opened())
-            .map(|(c, loot)| (c.pos, loot.iter().map(|i| i.rarity).max().unwrap_or(0)))
-            .collect();
-        crate::chest_glow::set(if self.in_run() { list } else { Vec::new() });
+            .map(|(c, loot)| (c.pos, loot.iter().map(|i| i.rarity).max().unwrap_or(0)));
+        let mut list: Vec<([f32; 3], u8)> = if self.in_run() { list.collect() } else { Vec::new() };
+        list.extend(
+            crate::town::TOWNS
+                .iter()
+                .map(|t| ([t.armory[0], t.armory[1], t.armory[2]], crate::chest_glow::COLLECTION)),
+        );
+        crate::chest_glow::set(list);
     }
 
     /// The cards of chest `i`'s items.
-    pub(super) fn chest_cards(&self, i: usize) -> (Vec<Card>, Vec<GearItem>) {
+    pub(super) fn chest_cards(&mut self, i: usize) -> (Vec<Card>, Vec<GearItem>) {
         let loot = self.chest_loot.get(i).cloned().unwrap_or_default();
+        // Each item shown is seen, for the collection chest's shadows.
+        for g in &loot {
+            let r = self.seen.entry(g.entry).or_insert(g.rarity);
+            *r = (*r).max(g.rarity);
+        }
         let cards = loot.iter().map(|g| self.item_card(g)).collect();
         (cards, loot)
     }
@@ -376,43 +441,266 @@ impl Game {
         }
     }
 
-    /// Back in town alive: what was worn joins the collection; dead, it is lost. Either way the
-    /// character wears their own things again.
+    /// Back in town alive: the run's finds join the collection (worn if their slot is free), and
+    /// an owned item keeps the upgrades it took. Dead, the finds and the upgrades are lost, the
+    /// owned items kept. Either way the character wears their collection's things again.
     pub(super) fn end_run_gear(&mut self, died: bool) {
         let worn: Vec<(u16, GearItem)> = self.run_gear.drain().collect();
-        for (slot, g) in &worn {
+        for (slot, g) in worn {
             let name = self.data.items.get(&g.entry).map_or("", |t| t.name.as_str()).to_owned();
             if died {
-                eprintln!("survivor: lost {name}");
+                if g.owned.is_none() {
+                    eprintln!("survivor: lost {name}");
+                }
                 continue;
             }
-            eprintln!("survivor: brought home {name}");
-            let line = format!(
-                "Brought home: {name} ({})",
-                RARITY_NAMES[usize::from(g.rarity)]
-            );
-            self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
-            self.collection.push(g.clone());
-            let start = self.start_visible.get(slot).copied().unwrap_or(0);
-            let mut fl = Fields::default();
-            fl.set(f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE, start);
-            self.values(self.player.guid, fl);
-        }
-        if died {
-            for (slot, _) in &worn {
-                let start = self.start_visible.get(slot).copied().unwrap_or(0);
-                let mut fl = Fields::default();
-                fl.set(f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE, start);
-                self.values(self.player.guid, fl);
+            match g.owned {
+                Some(id) => {
+                    if let Some(o) = self.collection.iter_mut().find(|o| o.id == id) {
+                        o.item.upgrades = g.upgrades;
+                    }
+                }
+                None => {
+                    let id = self.next_owned;
+                    self.next_owned += 1;
+                    eprintln!("survivor: brought home {name}");
+                    let line = format!(
+                        "Brought home: {name} ({})",
+                        RARITY_NAMES[usize::from(g.rarity)]
+                    );
+                    self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+                    let mut item = g;
+                    item.owned = Some(id);
+                    self.collection.push(OwnedItem {
+                        id,
+                        item,
+                        favourite: false,
+                    });
+                    self.loadout.entry(slot).or_insert(id);
+                }
             }
         }
+        self.wear_loadout();
+        self.save();
+    }
+
+    /// The collection's worn things on the character: the run gear, the looks, the weapon, the
+    /// stats.
+    pub(super) fn wear_loadout(&mut self) {
+        self.run_gear = self
+            .loadout
+            .iter()
+            .filter_map(|(&slot, &id)| {
+                let o = self.collection.iter().find(|o| o.id == id)?;
+                Some((slot, o.item.clone()))
+            })
+            .collect();
+        let slots: std::collections::BTreeSet<u16> = self
+            .start_visible
+            .keys()
+            .chain(ARMORY_SLOTS.iter())
+            .copied()
+            .collect();
+        let mut fl = Fields::default();
+        for slot in slots {
+            let entry = self
+                .run_gear
+                .get(&slot)
+                .map_or_else(|| self.start_visible.get(&slot).copied().unwrap_or(0), |g| g.entry);
+            fl.set(f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE, entry);
+        }
+        self.values(self.player.guid, fl);
         self.player.weapon = self.start_weapon;
+        if let Some(t) = self
+            .run_gear
+            .get(&15)
+            .and_then(|g| self.data.items.get(&g.entry))
+            .filter(|t| t.damage.1 > 0.0)
+        {
+            self.player.weapon = (
+                t.damage.0.max(1.0),
+                t.damage.1.max(2.0),
+                std::time::Duration::from_millis(u64::from(t.delay.max(1000))),
+            );
+        }
         let mut fl = Fields::default();
         fl.setf(f::MINDAMAGE, self.player.weapon.0)
             .setf(f::MAXDAMAGE, self.player.weapon.1)
             .set(f::BASEATTACKTIME, self.player.weapon.2.as_millis() as u32);
         self.values(self.player.guid, fl);
         self.apply_gear();
+    }
+
+    /// In town, standing by the collection chest opens it; walking off closes it.
+    pub(super) fn open_armory_nearby(&mut self) {
+        let me = self.player.pos;
+        let near = |t: &crate::town::Town| {
+            super::dist2d([t.armory[0], t.armory[1], t.armory[2]], me)
+        };
+        let far = crate::town::TOWNS.iter().all(|t| near(t) > ARMORY_RESET);
+        if self.armory_open.is_some() {
+            if far || self.in_run() {
+                self.armory_open = None;
+                crate::armory::clear();
+            }
+            return;
+        }
+        if self.armory_closed {
+            self.armory_closed = !far;
+            return;
+        }
+        if self.in_run()
+            || self.paused()
+            || self.player.dead_until.is_some()
+            || !self.walked
+            || self.open_panel.is_some()
+        {
+            return;
+        }
+        if crate::town::TOWNS.iter().any(|t| near(t) <= ARMORY_RANGE) {
+            self.post_armory();
+        }
+    }
+
+    /// The collection chest's tabs: every owned item of each slot, and in shadow the ones only
+    /// seen. Favourites first, then what is worn, then by rarity and upgrades.
+    fn post_armory(&mut self) {
+        let tabs = ARMORY_SLOTS
+            .iter()
+            .map(|&slot| {
+                let mut rows: Vec<crate::armory::Row> = self
+                    .collection
+                    .iter()
+                    .filter(|o| self.slot_of_item(o.item.entry) == Some(slot))
+                    .map(|o| {
+                        let worn = self.loadout.get(&slot) == Some(&o.id);
+                        self.armory_row(&o.item, o.id, o.favourite, worn, false)
+                    })
+                    .collect();
+                let owned: std::collections::HashSet<u32> =
+                    self.collection.iter().map(|o| o.item.entry).collect();
+                rows.extend(
+                    self.seen
+                        .iter()
+                        .filter(|(e, _)| !owned.contains(e) && self.slot_of_item(**e) == Some(slot))
+                        .map(|(&entry, &rarity)| {
+                            let g = GearItem {
+                                entry,
+                                rarity,
+                                stats: Vec::new(),
+                                upgrades: 0,
+                                owned: None,
+                            };
+                            self.armory_row(&g, 0, false, false, true)
+                        }),
+                );
+                rows.sort_by(|a, b| {
+                    (b.favourite, b.worn, !b.seen_only, b.rarity, b.upgrades)
+                        .cmp(&(a.favourite, a.worn, !a.seen_only, a.rarity, a.upgrades))
+                        .then_with(|| a.name.cmp(&b.name))
+                });
+                crate::armory::Tab {
+                    slot,
+                    name: slot_name(slot).to_owned(),
+                    rows,
+                }
+            })
+            .collect();
+        self.armory_open = Some(crate::armory::post(tabs));
+    }
+
+    fn armory_row(
+        &self,
+        g: &GearItem,
+        key: u64,
+        favourite: bool,
+        worn: bool,
+        seen_only: bool,
+    ) -> crate::armory::Row {
+        let t = self.data.items.get(&g.entry);
+        let mut lines = Vec::new();
+        if let Some(t) = t {
+            if t.damage.1 > 0.0 {
+                lines.push(format!("{:.0} - {:.0} damage", t.damage.0, t.damage.1));
+            } else if t.armor > 0 {
+                lines.push(format!("{} armor", t.armor));
+            }
+        }
+        lines.extend(g.stat_values().map(|(s, x)| s.line(x)));
+        crate::armory::Row {
+            key,
+            entry: g.entry,
+            name: t.map_or_else(|| format!("Item {}", g.entry), |t| t.name.clone()),
+            display: t.map_or(0, |t| t.display),
+            rarity: g.rarity,
+            upgrades: g.upgrades,
+            favourite,
+            worn,
+            seen_only,
+            lines,
+        }
+    }
+
+    /// The collection chest's answer.
+    pub(super) fn take_armory_action(&mut self) {
+        let Some((id, action)) = crate::armory::take_action() else { return };
+        if self.armory_open != Some(id) {
+            return;
+        }
+        match action {
+            crate::armory::Action::Close => {
+                self.armory_open = None;
+                crate::armory::clear();
+                // Quiet until walked off and back.
+                self.armory_closed = true;
+                return;
+            }
+            crate::armory::Action::Favourite(key) => {
+                if let Some(o) = self.collection.iter_mut().find(|o| o.id == key) {
+                    o.favourite = !o.favourite;
+                }
+            }
+            crate::armory::Action::Toggle(key) => {
+                let Some(entry) = self.collection.iter().find(|o| o.id == key).map(|o| o.item.entry)
+                else {
+                    return;
+                };
+                let Some(slot) = self.slot_of_item(entry) else { return };
+                if self.loadout.get(&slot) == Some(&key) {
+                    self.loadout.remove(&slot);
+                } else {
+                    self.loadout.insert(slot, key);
+                }
+                self.wear_loadout();
+            }
+        }
+        self.save();
+        self.post_armory();
+    }
+
+    /// The collection chests in the towns, as game objects.
+    pub(super) fn update_armory_chests(&mut self) {
+        let me = self.player.pos;
+        for (i, t) in crate::town::TOWNS.iter().enumerate() {
+            let at = [t.armory[0], t.armory[1], t.armory[2]];
+            let guid = 0xF110_0000_0000_0000 | u64::from(ARMORY_ENTRY) << 24 | 0x80_0000 | i as u64;
+            let d = super::dist2d(at, me);
+            let shown = self.armory_shown.contains(&i);
+            if !shown && d <= super::VISIBLE {
+                if let Some(tpl) = self.data.chest_templates.get(&ARMORY_ENTRY) {
+                    let rot = [0.0, 0.0, (t.armory[3] / 2.0).sin(), (t.armory[3] / 2.0).cos()];
+                    let u = packets::gameobject_create(guid, tpl, at, t.armory[3], rot);
+                    self.send(opcode::SMSG_UPDATE_OBJECT, &packets::update_object(&[u]));
+                    self.armory_shown.insert(i);
+                }
+            } else if shown && d > super::VISIBLE_DROP {
+                self.armory_shown.remove(&i);
+                self.send(
+                    opcode::SMSG_UPDATE_OBJECT,
+                    &packets::update_object(&[packets::Update::OutOfRange(vec![guid])]),
+                );
+            }
+        }
     }
 
     /// A chest opened: its items on the card screen, the world paused.
@@ -432,6 +720,9 @@ impl Game {
         self.publish_chest_glow();
     }
 }
+
+/// The collection chest's template entry, the server's own.
+pub(crate) const ARMORY_ENTRY: u32 = 900_001;
 
 /// Run gear by equipment slot.
 pub(crate) type RunGear = HashMap<u16, GearItem>;

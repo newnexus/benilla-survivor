@@ -174,6 +174,19 @@ impl Game {
         self.mode == Mode::Run
     }
 
+    /// The first tick in the world: what the save file holds put on the character (the meta
+    /// level in town, the purse, the collection's worn things).
+    pub(super) fn after_login(&mut self) {
+        if !self.in_run() {
+            self.player.level = self.meta.level;
+            self.player.xp = self.meta.xp;
+            self.reset_character(meta_next(self.meta.level));
+        }
+        self.send_money();
+        self.wear_loadout();
+        self.publish_chest_glow();
+    }
+
     /// Crossing a barrier, either way; asked every tick.
     pub(super) fn check_barrier(&mut self, now: Instant) {
         if self.player.dead_until.is_some() {
@@ -287,6 +300,8 @@ impl Game {
             .set(f::MAXPOWER1 + pt, max)
             .set(f::POWER1 + pt, self.player.power.current);
         self.values(self.player.guid, fl);
+        // The worn gear's health on top.
+        self.apply_gear();
     }
 
     /// A dead run ends in the nearest town, standing.

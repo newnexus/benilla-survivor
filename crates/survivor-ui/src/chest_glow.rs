@@ -44,7 +44,7 @@ fn show_glows(
     }
     let mesh = shown.mesh.get_or_insert_with(|| meshes.add(ring())).clone();
     if shown.materials.is_empty() {
-        shown.materials = (0..5u8)
+        shown.materials = (0..=survivor_server::chest_glow::COLLECTION)
             .map(|r| materials.add(flame(crate::rarity_color(r))))
             .collect();
     }
@@ -52,7 +52,7 @@ fn show_glows(
         commands.spawn((
             ChestGlow,
             Mesh3d(mesh.clone()),
-            MeshMaterial3d(shown.materials[usize::from(rarity.min(4))].clone()),
+            MeshMaterial3d(shown.materials[usize::from(rarity).min(shown.materials.len() - 1)].clone()),
             Transform::from_translation(benilla_assets::coords::wow_to_bevy(pos)),
         ));
     }

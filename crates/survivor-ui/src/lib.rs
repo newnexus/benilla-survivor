@@ -26,6 +26,7 @@ mod countdown;
 mod quest_frame;
 mod quest_panel;
 mod chest_glow;
+mod armory;
 mod haven;
 mod queue;
 mod settings;
@@ -45,7 +46,7 @@ impl Plugin for SurvivorUiPlugin {
             .add_systems(Update, (show_offer, take_card, hover_cards).chain())
             .add_systems(Update, follow_aim)
             .add_systems(Update, preload_library)
-            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin));
+            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin, armory::plugin));
     }
 }
 
@@ -93,9 +94,9 @@ const RARITY: [Color; 5] = [
 ];
 const RARITY_NAMES: [&str; 5] = ["COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY"];
 
-/// The card's colour for its rarity.
+/// The card's colour for its rarity; past legendary, the collection chests' gold.
 fn rarity_color(rarity: u8) -> Color {
-    RARITY[usize::from(rarity.min(4))]
+    RARITY.get(usize::from(rarity)).copied().unwrap_or(GOLD)
 }
 
 /// A card's background: the dark card tinted toward its rarity, the more for a rarer one.

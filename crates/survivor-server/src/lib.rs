@@ -5,6 +5,7 @@
 //! Loopback only, by construction: both listeners bind `127.0.0.1`.
 
 pub mod aim;
+pub mod armory;
 pub mod bar;
 mod data;
 mod game;
@@ -23,6 +24,9 @@ pub mod chest_glow {
     pub fn current() -> (u64, Vec<([f32; 3], u8)>) {
         GLOWS.lock().map(|g| g.clone()).unwrap_or_default()
     }
+
+    /// The collection chests' glow, gold, past the rarities.
+    pub const COLLECTION: u8 = 5;
 
     pub(crate) fn set(list: Vec<([f32; 3], u8)>) {
         if let Ok(mut g) = GLOWS.lock() {

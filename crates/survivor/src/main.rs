@@ -17,6 +17,12 @@ fn main() -> benilla_app::AppExit {
     std::env::set_var("WOW_HOST", &server.realmd);
     std::env::set_var("WOW_USER", survivor_server::ACCOUNT);
     std::env::set_var("WOW_PASS", survivor_server::PASSWORD);
+    // The characters' collections and meta levels, in the client's own state folder.
+    if std::env::var_os("SURVIVOR_SAVE_DIR").is_none() {
+        if let Some(dir) = benilla_app::config_dir() {
+            std::env::set_var("SURVIVOR_SAVE_DIR", dir.join("survivor-saves"));
+        }
+    }
     // Straight to the one realm: no realm list.
     std::env::set_var("WOW_REALM", survivor_server::REALM_NAME);
     // Casters cast on the run: no moving refusal, no move cancel.
