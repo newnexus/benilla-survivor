@@ -242,6 +242,7 @@ mod packets;
 pub mod picks;
 pub mod quest_board;
 pub mod spirit;
+pub mod trainer;
 
 /// The closed chests and the rarity of the best item in each, for the screen's glow.
 pub mod chest_glow {

@@ -33,6 +33,9 @@ impl Game {
         let _ = writeln!(s, "money {}", self.banked_money());
         let _ = writeln!(s, "souls {}", self.souls);
         let _ = writeln!(s, "healer {}", self.healer.to_line());
+        for (chain, ranks) in &self.owned {
+            let _ = writeln!(s, "owned {chain} {ranks}");
+        }
         for (id, rank) in &self.talents {
             let _ = writeln!(s, "talent {id} {rank}");
         }
@@ -88,6 +91,13 @@ impl Game {
                     crate::spirit::souls::set(self.souls);
                 }
                 Some("healer") => self.healer = super::spirit::Healer::from_line(&mut w),
+                Some("owned") => {
+                    let chain = num(w.next()) as u32;
+                    let ranks = num(w.next()) as u32;
+                    if ranks > 0 {
+                        self.owned.insert(chain, ranks);
+                    }
+                }
                 Some("talent") => {
                     let id = num(w.next()) as u32;
                     let rank = num(w.next()) as u32;

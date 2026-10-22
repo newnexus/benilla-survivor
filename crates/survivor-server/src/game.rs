@@ -28,6 +28,7 @@ mod save;
 mod spawner;
 mod spirit;
 mod talents;
+mod trainer;
 mod town;
 mod upgrade;
 pub(crate) use gear::ARMORY_ENTRY;
@@ -381,6 +382,11 @@ pub(crate) struct Game {
     run_kills: u32,
     /// Talents taken, by talent id: their rank.
     talents: std::collections::HashMap<u32, u32>,
+    /// Skills bought from the trainer: rank chain to ranks bought.
+    owned: std::collections::HashMap<u32, u32>,
+    /// The trainer's window, open (its board id), or closed by the player until they walk off.
+    trainer_open: Option<u64>,
+    trainer_closed: bool,
     armory_shown: HashSet<usize>,
     /// The starting gear per equipment slot (its entry and item guid), and its weapon: what a
     /// run ends back in.
@@ -565,6 +571,9 @@ impl Game {
             runes: runes::Runes::default(),
             run_kills: 0,
             talents: std::collections::HashMap::new(),
+            owned: std::collections::HashMap::new(),
+            trainer_open: None,
+            trainer_closed: false,
             armory_shown: HashSet::new(),
             start_visible,
             worn_items: std::collections::HashMap::new(),
@@ -671,6 +680,7 @@ impl Game {
         self.take_panel_answer();
         self.take_armory_action();
         self.take_spirit_action();
+        self.take_trainer_action();
         self.pause_for_menu();
         if self.paused() {
             return;
@@ -690,6 +700,7 @@ impl Game {
         }
         self.open_armory_nearby();
         self.open_spirit_nearby(now);
+        self.open_trainer_nearby(now);
         self.walk_beats(now);
         self.guard_posts(now);
         self.update_npcs(now);
@@ -1115,6 +1126,8 @@ impl Game {
         }
         fl.set(f::PLAYER_XP, self.player.xp);
         self.values(self.player.guid, fl);
+        // Bought skills whose level the run has now reached.
+        self.grant_owned();
     }
 
     fn mob_ai(&mut self, i: usize, now: Instant) {

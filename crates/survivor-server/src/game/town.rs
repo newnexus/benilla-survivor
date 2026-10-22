@@ -245,6 +245,7 @@ impl Game {
         self.player.level = 1;
         self.player.xp = 0;
         self.reset_character(self.curve.next_level(1));
+        self.grant_owned();
         eprintln!("survivor: run started");
         self.send(opcode::SMSG_NOTIFICATION, &packets::notification("The run begins: level 1"));
     }

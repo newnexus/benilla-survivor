@@ -15,7 +15,7 @@ use crate::picks::{self, Card};
 /// Choices per level-up.
 const OFFER: usize = 3;
 /// The most damage and defensive skills a run can hold.
-const MAX_DAMAGE: usize = 6;
+pub(super) const MAX_DAMAGE: usize = 6;
 const MAX_DEFENSIVE: usize = 2;
 /// Skills a trainer would teach up to this many levels ahead may be offered.
 const LEAD: u32 = 4;
@@ -181,7 +181,13 @@ impl Game {
     /// The cards for one level: learning cards and upgrade cards mixed, each upgrade's rarity
     /// rolled, no skill on two cards of one offer.
     fn deal(&mut self) -> (Vec<Card>, Vec<Option<super::upgrade::Boost>>) {
-        let offer = self.roll_offer();
+        // Skills come from the trainer: the cards only improve the ones the player has.
+        // `$SURVIVOR_LEARN_CARDS=1` brings back cards that teach, to compare the two.
+        let offer = if std::env::var("SURVIVOR_LEARN_CARDS").as_deref() == Ok("1") {
+            self.roll_offer()
+        } else {
+            Vec::new()
+        };
         let mut learn = offer.into_iter();
         // A banished skill is never dealt again this run.
         let (mut cards, mut boosts) = (Vec::new(), Vec::new());
@@ -199,10 +205,14 @@ impl Game {
                 }
                 None => match learn.by_ref().find(|c| !taken.contains(&self.chain(c.spell).0)) {
                     Some(c) => (c, None),
-                    None => match self.roll_boost(&taken) {
-                        Some(b) => (self.boost_card(&b), Some(b)),
-                        None => break,
-                    },
+                    None => {
+                        // Fewer skills than cards: a second upgrade of one already dealt.
+                        let banished: Vec<u32> = self.banished.iter().copied().collect();
+                        match self.roll_boost(&taken).or_else(|| self.roll_boost(&banished)) {
+                            Some(b) => (self.boost_card(&b), Some(b)),
+                            None => break,
+                        }
+                    }
                 },
             };
             taken.push(match &boost {
