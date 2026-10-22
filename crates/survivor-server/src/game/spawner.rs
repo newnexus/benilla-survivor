@@ -69,6 +69,11 @@ impl Waves {
         }
     }
 
+    /// Seconds the run has lasted, pauses left out.
+    pub(super) fn survived(&self, now: Instant) -> f32 {
+        now.saturating_duration_since(self.started).as_secs_f32()
+    }
+
     pub(crate) fn shift(&mut self, by: Duration) {
         self.started += by;
         self.next_kind += by;

@@ -376,6 +376,8 @@ pub(crate) struct Game {
     banished: std::collections::HashSet<u32>,
     /// Runes lying about a run, and their powers on the player.
     runes: runes::Runes,
+    /// This run's kills, for its summary.
+    run_kills: u32,
     armory_shown: HashSet<usize>,
     /// The starting gear per equipment slot (its entry and item guid), and its weapon: what a
     /// run ends back in.
@@ -558,6 +560,7 @@ impl Game {
             banishes_left: 0,
             banished: std::collections::HashSet::new(),
             runes: runes::Runes::default(),
+            run_kills: 0,
             armory_shown: HashSet::new(),
             start_visible,
             worn_items: std::collections::HashMap::new(),
@@ -1064,6 +1067,9 @@ impl Game {
         let copper = self.gold_for(level);
         let at = self.mobs[i].pos;
         self.drop_orbs(at, xp, copper, now);
+        if self.in_run() {
+            self.run_kills += 1;
+        }
         eprintln!(
             "survivor: killed {} (level {level}) for {xp} xp",
             self.data.creatures[&self.mobs[i].entry].name

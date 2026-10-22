@@ -235,6 +235,8 @@ impl Game {
             .unwrap_or(0);
         self.run_found = 0;
         self.send_money();
+        self.run_kills = 0;
+        crate::run_summary::close();
         // The spirit healer's charges, afresh.
         self.rerolls_left = self.healer.rerolls;
         self.banishes_left = self.healer.banishes;
@@ -250,6 +252,11 @@ impl Game {
     /// death (the player was carried here).
     fn enter_town(&mut self, i: usize, died: bool, now: Instant) {
         let reached = self.player.level;
+        let seconds = self
+            .waves
+            .as_ref()
+            .map_or(0.0, |w| w.survived(now));
+        let souls = self.run_souls;
         self.mode = Mode::Town(i);
         self.waves = None;
         self.clear_spawned(now);
@@ -284,16 +291,19 @@ impl Game {
         self.reset_character(meta_next(self.meta.level));
         let name = TOWNS[i].name;
         eprintln!("survivor: safe in {name}, the run ended at level {reached}");
-        let line = if died {
-            format!("You fell at level {reached}. Safe in {name}.")
-        } else {
-            format!(
-                "Safe in {name}. The run ended at level {reached}. Brought home {} of {} found.",
-                super::chest::money_text(brought),
-                super::chest::money_text(found)
-            )
-        };
-        self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+        crate::run_summary::post(crate::run_summary::Summary {
+            id: 0,
+            died,
+            town: name.to_owned(),
+            level: reached,
+            seconds,
+            kills: self.run_kills,
+            found,
+            brought,
+            souls,
+            souls_home: if died { 0 } else { souls },
+        });
+        self.run_kills = 0;
     }
 
     /// The character as a level start has them: health, power, the starting spells and bar, and

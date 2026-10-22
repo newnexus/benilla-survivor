@@ -177,6 +177,49 @@ pub mod big_bars {
     }
 }
 
+/// A run's end, for the summary window that stays up until the player closes it.
+pub mod run_summary {
+    use std::sync::Mutex;
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Summary {
+        /// Distinct per run, so a closed one is never shown again.
+        pub id: u64,
+        pub died: bool,
+        pub town: String,
+        pub level: u32,
+        pub seconds: f32,
+        pub kills: u32,
+        /// Copper picked up on the run, and the part brought home.
+        pub found: u32,
+        pub brought: u32,
+        /// Souls picked up, and the ones brought home (none after a death).
+        pub souls: u32,
+        pub souls_home: u32,
+    }
+
+    static NOW: Mutex<(u64, Option<Summary>)> = Mutex::new((0, None));
+
+    pub fn current() -> Option<Summary> {
+        NOW.lock().ok().and_then(|n| n.1.clone())
+    }
+
+    /// The player closed it.
+    pub fn close() {
+        if let Ok(mut n) = NOW.lock() {
+            n.1 = None;
+        }
+    }
+
+    pub(crate) fn post(mut s: Summary) {
+        if let Ok(mut n) = NOW.lock() {
+            n.0 += 1;
+            s.id = n.0;
+            n.1 = Some(s);
+        }
+    }
+}
+
 /// The player's purse, copper, for the screen's corner.
 pub mod purse {
     use std::sync::atomic::{AtomicU32, Ordering};
