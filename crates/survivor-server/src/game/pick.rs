@@ -17,8 +17,6 @@ const OFFER: usize = 3;
 /// The most damage and defensive skills a run can hold.
 pub(super) const MAX_DAMAGE: usize = 6;
 const MAX_DEFENSIVE: usize = 2;
-/// Skills a trainer would teach up to this many levels ahead may be offered.
-const LEAD: u32 = 4;
 
 /// An open pick: the board's offer id, and when the world stopped.
 pub(crate) struct Pick {
@@ -132,7 +130,7 @@ impl Game {
         };
         let room_damage = held(SpellKind::Damage) < MAX_DAMAGE;
         let room_defensive = held(SpellKind::Defensive) < MAX_DEFENSIVE;
-        let mut candidates: Vec<(u32, Card)> = self
+        let candidates: Vec<(u32, Card)> = self
             .data
             .class_spells
             .iter()
@@ -162,14 +160,14 @@ impl Game {
                 Some((c.req_level, card))
             })
             .collect();
-        candidates.sort_by_key(|c| (c.0, c.1.spell));
-        let near = candidates
-            .iter()
-            .filter(|c| c.0 <= self.player.level + LEAD)
-            .count()
-            .max(OFFER)
-            .min(candidates.len());
-        let mut pool: Vec<Card> = candidates.drain(..near).map(|c| c.1).collect();
+        // Only skills the run's level has reached, and only new ones: a next rank is the
+        // trainer's.
+        let level = self.player.level;
+        let mut pool: Vec<Card> = candidates
+            .into_iter()
+            .filter(|c| c.0 <= level && c.1.replaces.is_none())
+            .map(|c| c.1)
+            .collect();
         for i in (1..pool.len()).rev() {
             let j = (self.rng.next() % (i as u64 + 1)) as usize;
             pool.swap(i, j);
@@ -181,12 +179,13 @@ impl Game {
     /// The cards for one level: learning cards and upgrade cards mixed, each upgrade's rarity
     /// rolled, no skill on two cards of one offer.
     fn deal(&mut self) -> (Vec<Card>, Vec<Option<super::upgrade::Boost>>) {
-        // Skills come from the trainer: the cards only improve the ones the player has.
-        // `$SURVIVOR_LEARN_CARDS=1` brings back cards that teach, to compare the two.
-        let offer = if std::env::var("SURVIVOR_LEARN_CARDS").as_deref() == Ok("1") {
-            self.roll_offer()
-        } else {
+        // A skill not yet had comes as a plain NEW card (its first rank, no modifier); its next
+        // ranks come from the trainer, so no card raises a rank. `$SURVIVOR_LEARN_CARDS=0`
+        // leaves the cards to modifiers only.
+        let offer: Vec<Card> = if std::env::var("SURVIVOR_LEARN_CARDS").as_deref() == Ok("0") {
             Vec::new()
+        } else {
+            self.roll_offer()
         };
         let mut learn = offer.into_iter();
         // A banished skill is never dealt again this run.
