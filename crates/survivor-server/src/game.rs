@@ -369,6 +369,10 @@ pub(crate) struct Game {
     healer: spirit::Healer,
     souls: u32,
     run_souls: u32,
+    /// This run's rerolls and banishes left, and the skill chains banished.
+    rerolls_left: u32,
+    banishes_left: u32,
+    banished: std::collections::HashSet<u32>,
     armory_shown: HashSet<usize>,
     /// The starting gear per equipment slot (its entry and item guid), and its weapon: what a
     /// run ends back in.
@@ -547,6 +551,9 @@ impl Game {
             healer: spirit::Healer::default(),
             souls: 0,
             run_souls: 0,
+            rerolls_left: 0,
+            banishes_left: 0,
+            banished: std::collections::HashSet::new(),
             armory_shown: HashSet::new(),
             start_visible,
             worn_items: std::collections::HashMap::new(),

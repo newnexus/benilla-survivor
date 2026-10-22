@@ -235,6 +235,10 @@ impl Game {
             .unwrap_or(0);
         self.run_found = 0;
         self.send_money();
+        // The spirit healer's charges, afresh.
+        self.rerolls_left = self.healer.rerolls;
+        self.banishes_left = self.healer.banishes;
+        self.banished.clear();
         self.player.level = 1;
         self.player.xp = 0;
         self.reset_character(self.curve.next_level(1));

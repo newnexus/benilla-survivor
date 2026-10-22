@@ -182,7 +182,9 @@ impl Game {
     fn deal(&mut self) -> (Vec<Card>, Vec<Option<super::upgrade::Boost>>) {
         let offer = self.roll_offer();
         let mut learn = offer.into_iter();
-        let (mut cards, mut boosts, mut taken) = (Vec::new(), Vec::new(), Vec::new());
+        // A banished skill is never dealt again this run.
+        let (mut cards, mut boosts) = (Vec::new(), Vec::new());
+        let mut taken: Vec<u32> = self.banished.iter().copied().collect();
         for _ in 0..OFFER {
             let boost = if self.rng.unit() < BOOST_SHARE {
                 self.roll_boost(&taken)
@@ -210,6 +212,69 @@ impl Game {
             boosts.push(boost);
         }
         (cards, boosts)
+    }
+
+    /// The level-up's cards dealt again, for one of the run's rerolls.
+    fn reroll_cards(&mut self) {
+        if self.rerolls_left == 0 {
+            return;
+        }
+        let (cards, boosts) = self.deal();
+        if cards.is_empty() {
+            return;
+        }
+        self.rerolls_left -= 1;
+        eprintln!("survivor: cards rerolled, {} rerolls left", self.rerolls_left);
+        self.repost(cards, boosts);
+    }
+
+    /// Card `k`'s skill struck from the run's cards, for one of its banishes; a fresh card takes
+    /// its place.
+    fn banish_card(&mut self, offer: &picks::Offer, k: usize) {
+        if self.banishes_left == 0 {
+            return;
+        }
+        let Some(card) = offer.cards.get(k) else { return };
+        let gone = self.chain(card.spell).0;
+        self.banished.insert(gone);
+        self.banishes_left -= 1;
+        eprintln!("survivor: banished {gone}, {} banishes left", self.banishes_left);
+        let shown: Vec<u32> = offer.cards.iter().map(|c| self.chain(c.spell).0).collect();
+        let (fresh, fresh_boosts) = self.deal();
+        let new = fresh
+            .into_iter()
+            .zip(fresh_boosts)
+            .find(|(c, _)| !shown.contains(&self.chain(c.spell).0));
+        let mut cards = offer.cards.clone();
+        let mut boosts: Vec<_> = self.pick.as_ref().map(|p| p.boosts.clone()).unwrap_or_default();
+        match new {
+            Some((c, b)) => {
+                cards[k] = c;
+                if let Some(slot) = boosts.get_mut(k) {
+                    *slot = b;
+                }
+            }
+            None => {
+                cards.remove(k);
+                if k < boosts.len() {
+                    boosts.remove(k);
+                }
+            }
+        }
+        if cards.is_empty() {
+            self.next_pick();
+            return;
+        }
+        self.repost(cards, boosts);
+    }
+
+    /// The open level-up shows `cards` instead.
+    fn repost(&mut self, cards: Vec<Card>, boosts: Vec<Option<super::upgrade::Boost>>) {
+        let id = picks::post(self.player.level, cards, self.rerolls_left, self.banishes_left);
+        if let Some(p) = self.pick.as_mut() {
+            p.id = id;
+            p.boosts = boosts;
+        }
     }
 
     /// The card that shows upgrade `b`.
@@ -243,6 +308,16 @@ impl Game {
             }
             picks::clear();
             self.resume(Instant::now());
+            return;
+        }
+        if index == picks::REROLL && !offer.cards.is_empty() && offer.title.is_none() {
+            self.reroll_cards();
+            return;
+        }
+        if let Some(k) = index.checked_sub(picks::BANISH) {
+            if offer.title.is_none() {
+                self.banish_card(&offer, k);
+            }
             return;
         }
         let Some(card) = offer.cards.get(index).cloned() else {
@@ -295,7 +370,7 @@ impl Game {
             "survivor: level-up pick offers {:?}",
             cards.iter().map(|c| (c.spell, c.rarity, c.boost.len())).collect::<Vec<_>>()
         );
-        let id = picks::post(self.player.level, cards);
+        let id = picks::post(self.player.level, cards, self.rerolls_left, self.banishes_left);
         self.pick = Some(Pick {
             id,
             paused_at: now,
@@ -335,7 +410,7 @@ impl Game {
         if self.picks_pending > 0 {
             let (cards, boosts) = self.deal();
             if !cards.is_empty() {
-                let id = picks::post(self.player.level, cards);
+                let id = picks::post(self.player.level, cards, self.rerolls_left, self.banishes_left);
                 let pick = self.pick.as_mut().expect("paused");
                 pick.id = id;
                 pick.boosts = boosts;

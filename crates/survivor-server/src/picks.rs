@@ -50,7 +50,16 @@ pub struct Offer {
     /// A chest's way out when no card suits: the button's words ("Recycle: 10c back"). Taking
     /// it answers with the index one past the last card.
     pub recycle: Option<String>,
+    /// A level-up's rerolls and banishes left this run (the spirit healer's): rerolling answers
+    /// [`REROLL`], banishing card `k` answers [`BANISH`] + `k`.
+    pub rerolls: u32,
+    pub banishes: u32,
 }
+
+/// The answer that deals the cards again.
+pub const REROLL: usize = 1000;
+/// The answer that banishes card `k` is this plus `k`.
+pub const BANISH: usize = 2000;
 
 struct Board {
     offer: Option<Offer>,
@@ -78,9 +87,14 @@ pub fn choose(id: u64, index: usize) {
     board().choice = Some((id, index));
 }
 
-/// Show `cards` for `level`; the offer's id comes back.
-pub(crate) fn post(level: u32, cards: Vec<Card>) -> u64 {
-    post_titled(level, cards, None, None)
+/// Show `cards` for `level`, with the rerolls and banishes left; the offer's id comes back.
+pub(crate) fn post(level: u32, cards: Vec<Card>, rerolls: u32, banishes: u32) -> u64 {
+    let id = post_titled(level, cards, None, None);
+    if let Some(o) = board().offer.as_mut() {
+        o.rerolls = rerolls;
+        o.banishes = banishes;
+    }
+    id
 }
 
 /// Show `cards` under `title` (a chest's name), or as a level-up, with a chest's `recycle`
@@ -100,6 +114,8 @@ pub(crate) fn post_titled(
         cards,
         title,
         recycle,
+        rerolls: 0,
+        banishes: 0,
     });
     b.choice = None;
     id

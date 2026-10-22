@@ -519,9 +519,53 @@ fn spawn_screen(
             })
             .with_children(|row| {
                 for (i, card) in offer.cards.iter().enumerate() {
-                    spawn_card(row, library, images, offer.id, i, card, vh);
+                    // Each card, with its banish under it while the run has banishes left.
+                    row.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Vh(1.2),
+                        ..default()
+                    })
+                    .with_children(|col| {
+                        let compact = offer.banishes > 0 || offer.rerolls > 0;
+                        spawn_card(col, library, images, offer.id, i, card, vh, compact);
+                        if offer.banishes > 0 && offer.title.is_none() {
+                            col.spawn(small_button(offer.id, picks::BANISH + i)).with_children(|b| {
+                                b.spawn(text(font, format!("Banish   [ Shift {} ]", i + 1), 2.8 * vh, GOLD));
+                            });
+                        }
+                    });
                 }
             });
+            // The run's rerolls (the cards dealt again) and how many banishes are left.
+            if (offer.rerolls > 0 || offer.banishes > 0) && offer.title.is_none() {
+                root.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Vh(3.0),
+                    ..default()
+                })
+                .with_children(|line| {
+                    if offer.rerolls > 0 {
+                        line.spawn(small_button(offer.id, picks::REROLL)).with_children(|b| {
+                            b.spawn(text(
+                                font,
+                                format!("Reroll ({} left)   [ T ]", offer.rerolls),
+                                3.2 * vh,
+                                GOLD,
+                            ));
+                        });
+                    }
+                    if offer.banishes > 0 {
+                        line.spawn(text(
+                            font,
+                            format!("{} banishes left: a banished skill never comes again this run", offer.banishes),
+                            2.4 * vh,
+                            Color::srgb(0.75, 0.72, 0.65),
+                        ));
+                    }
+                });
+            }
             // A chest's way out: none of its things, a part of its price back.
             if let Some(words) = &offer.recycle {
                 root.spawn((
@@ -549,6 +593,27 @@ fn spawn_screen(
         .id()
 }
 
+/// A small button under the cards answering `index`.
+fn small_button(offer: u64, index: usize) -> impl Bundle {
+    (
+        CardButton {
+            offer,
+            index,
+            rarity: 0,
+        },
+        Button,
+        Node {
+            margin: UiRect::top(Val::Vh(1.0)),
+            padding: UiRect::axes(Val::Vh(2.5), Val::Vh(0.9)),
+            border: UiRect::all(Val::Vh(0.25)),
+            border_radius: BorderRadius::all(Val::Vh(1.0)),
+            ..default()
+        },
+        BackgroundColor(card_bg(0, false)),
+        BorderColor::all(CARD_EDGE),
+    )
+}
+
 fn spawn_card(
     row: &mut ChildSpawnerCommands,
     library: &Library,
@@ -557,6 +622,7 @@ fn spawn_card(
     index: usize,
     card: &Card,
     vh: f32,
+    compact: bool,
 ) {
     let font = &library.font;
     let spell = library.spells.get(card.spell);
@@ -603,7 +669,9 @@ fn spawn_card(
             // three still fit side by side.
             width: Val::Vh(52.0),
             max_width: Val::Vw(31.0),
-            min_height: Val::Vh(70.0),
+            min_height: Val::Vh(if compact { 60.0 } else { 70.0 }),
+            // As tall as the tallest beside it, so the banishes under them line up.
+            flex_grow: 1.0,
             padding: UiRect::all(Val::Vh(2.5)),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
@@ -679,11 +747,20 @@ fn take_card(
         [KeyCode::Digit2, KeyCode::Numpad2],
         [KeyCode::Digit3, KeyCode::Numpad3],
     ];
-    // R is the recycle button's, placed after the cards.
-    let pressed_key = KEYS.iter().position(|k| keys.any_just_pressed(*k)).or_else(|| {
+    // R is the recycle button's, placed after the cards; T rerolls; Shift with a number banishes
+    // that card.
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let number = KEYS.iter().position(|k| keys.any_just_pressed(*k));
+    let pressed_key = match number {
+        Some(n) if shift => Some(picks::BANISH + n),
+        Some(n) => Some(n),
+        None => None,
+    }
+    .or_else(|| {
         let recycle = picks::offer().and_then(|o| o.recycle.map(|_| o.cards.len()));
         recycle.filter(|_| keys.just_pressed(KeyCode::KeyR))
-    });
+    })
+    .or_else(|| keys.just_pressed(KeyCode::KeyT).then_some(picks::REROLL));
     // By each card's own index: a query's order is not the order on screen.
     let picked = cards
         .iter()
