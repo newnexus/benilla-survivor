@@ -550,6 +550,7 @@ fn export_quests(
     givers: &std::collections::BTreeSet<i64>,
     spawned: &std::collections::BTreeSet<i64>,
     gathers: &std::collections::BTreeMap<i64, i64>,
+    rewards_used: &mut std::collections::BTreeSet<i64>,
 ) -> Result<usize> {
     let mut item_name = conn.prepare(
         "SELECT name FROM item_template WHERE entry = ?1 AND patch <= ?2
@@ -565,7 +566,9 @@ fn export_quests(
                 q.ReqItemId1, q.ReqItemId2, q.ReqItemId3, q.ReqItemId4, q.RequiredClasses, r.id,
                 (SELECT e.id FROM creature_involvedrelation e
                   WHERE e.quest = q.entry AND e.patch_min <= ?1 AND e.patch_max >= ?1 LIMIT 1),
-                q.ReqItemCount1, q.ReqItemCount2, q.ReqItemCount3, q.ReqItemCount4
+                q.ReqItemCount1, q.ReqItemCount2, q.ReqItemCount3, q.ReqItemCount4,
+                q.RewChoiceItemId1, q.RewChoiceItemId2, q.RewChoiceItemId3,
+                q.RewChoiceItemId4, q.RewChoiceItemId5, q.RewChoiceItemId6
          FROM quest_template q JOIN creature_questrelation r ON r.quest = q.entry
          WHERE r.patch_min <= ?1 AND r.patch_max >= ?1
            AND q.patch = (SELECT MAX(patch) FROM quest_template u
@@ -651,6 +654,15 @@ fn export_quests(
             cols.push(format!("{},{}", targets[k].max(0), counts[k].max(0)));
         }
         cols.extend(texts);
+        // The items to choose one of on handing it in.
+        let rewards: Vec<i64> = (35..41)
+            .map(|c| r.get::<_, i64>(c))
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|&i| i > 0)
+            .collect();
+        rewards_used.extend(&rewards);
+        cols.push(rewards.iter().map(i64::to_string).collect::<Vec<_>>().join(","));
         kept.push(Row {
             id,
             cols,
@@ -661,7 +673,7 @@ fn export_quests(
     let mut tsv = String::from(
         "id\tlevel\tmin_level\tprev\tgiver\tender\txp\tmoney\ttitle\tdetails\tobjectives\t\
          offer_text\tend_text\tkill1\tkill2\tkill3\tkill4\tobjective1\tobjective2\tobjective3\t\
-         objective4\n",
+         objective4\trewards\n",
     );
     for mut k in kept {
         k.cols[3] = if ids.contains(&k.prev) { k.prev } else { 0 }.to_string();
@@ -954,7 +966,8 @@ fn main() -> Result<()> {
     std::fs::write(out.join("npcs.tsv"), &npcs)?;
     let gathers = export_gathers(&conn, &chain, &mut zones, &areas, out)?;
     export_talents(&mut chain, out)?;
-    let quests = export_quests(&conn, out, &npcs_used, &used, &gathers)?;
+    let mut rewards_used = std::collections::BTreeSet::new();
+    let quests = export_quests(&conn, out, &npcs_used, &used, &gathers, &mut rewards_used)?;
     if let Some(dir) = std::env::var_os("VOICEOVER_DIR") {
         let lines = copy_quest_voices(Path::new(&dir), out)?;
         println!("survivor-data: {lines} quest voice lines");
@@ -1001,7 +1014,8 @@ fn main() -> Result<()> {
         "SELECT class, itemid, amount FROM playercreateinfo_item WHERE race = ?1 ORDER BY class",
     )?;
     let mut start = String::from("class\titem\tamount\n");
-    let mut items_used = std::collections::BTreeSet::new();
+    // The quests' reward items, beside the starting gear and the chests'.
+    let mut items_used = rewards_used;
     for row in stmt.query_map([UNDEAD], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
     })? {

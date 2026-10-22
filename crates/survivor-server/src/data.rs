@@ -186,6 +186,8 @@ pub(crate) struct Quest {
     /// Up to four `(creature entry, count)` kills, `(0, 0)` where unused.
     pub(crate) kills: [(u32, u32); 4],
     pub(crate) objective_texts: [String; 4],
+    /// The items to choose one of on handing it in.
+    pub(crate) rewards: Vec<u32>,
 }
 
 /// A class's trainer spell with its rank chain.
@@ -499,6 +501,10 @@ impl WorldData {
                     (entry, survivor_count(entry, count))
                 }),
                 objective_texts: std::array::from_fn(|k| text(17 + k)),
+                rewards: r
+                    .get(21)
+                    .map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect())
+                    .unwrap_or_default(),
             });
         }
         // Only the objects a quest wants.

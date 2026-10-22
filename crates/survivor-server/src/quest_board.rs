@@ -36,13 +36,23 @@ pub struct Entry {
     pub objectives: String,
     pub money: u32,
     pub xp: u32,
+    /// The items to choose one of on handing it in.
+    pub rewards: Vec<RewardItem>,
+}
+
+/// A reward item: its entry, name, and `ItemDisplayInfo.dbc` row for its icon.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RewardItem {
+    pub entry: u32,
+    pub name: String,
+    pub display: u32,
 }
 
 /// The screen's answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
-    /// Accept (or complete) this quest.
-    Accept(u32),
+    /// Accept (or complete) this quest, with the reward item chosen (0 for none).
+    Accept(u32, u32),
     Close,
 }
 

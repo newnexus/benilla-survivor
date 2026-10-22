@@ -39,7 +39,8 @@ const FRAME_GOLD: Color = Color::srgb(0.85, 0.65, 0.2);
 const PORTRAIT: f32 = 13.0;
 
 pub(crate) fn plugin(app: &mut App) {
-    app.init_resource::<Talk>().add_systems(
+    app.init_resource::<Talk>()
+        .init_resource::<RewardPick>().add_systems(
         Update,
         (
             show_panel,
@@ -139,6 +140,7 @@ fn show_panel(
     time: Res<Time<Real>>,
     mut talk: ResMut<Talk>,
     mut shown: Local<Shown>,
+    mut pick: ResMut<RewardPick>,
 ) {
     let panel = quest_board::current();
     let height = window.single().map_or(720.0, Window::height);
@@ -218,12 +220,24 @@ fn show_panel(
         })
         .unwrap_or_default();
     let fonts = (library.font.clone(), library.title_font.clone());
+    // The reward items' icons.
+    let icons: std::collections::HashMap<u32, Handle<Image>> = panel
+        .entries
+        .iter()
+        .flat_map(|e| e.rewards.iter())
+        .filter_map(|r| Some((r.entry, images.add(library.item_icon(r.display)?))))
+        .collect();
     drop(library);
     if panel.entries.is_empty() {
         return;
     }
     let selected = selected.min(panel.entries.len() - 1);
-    let root = spawn_panel(&mut commands, &panel, selected, talk.step, &coins, &fonts);
+    // The first reward chosen until the player picks another.
+    let first = panel.entries[selected].rewards.first().map_or(0, |r| r.entry);
+    if pick.0 != (panel.id, selected) {
+        *pick = RewardPick((panel.id, selected), first);
+    }
+    let root = spawn_panel(&mut commands, &panel, selected, talk.step, &coins, &fonts, &icons, pick.1);
     shown.root = Some(root);
     shown.panel = wanted;
 }
@@ -279,6 +293,8 @@ fn spawn_panel(
     step: Step,
     coins: &[Option<Coin>; 3],
     (font, title_font): &(Handle<Font>, Handle<Font>),
+    icons: &std::collections::HashMap<u32, Handle<Image>>,
+    chosen: u32,
 ) -> Entity {
     let text = |s: &str, f: &Handle<Font>, size_vh: f32, color: Color| {
         (
@@ -548,6 +564,49 @@ fn spawn_panel(
                         if e.xp > 0 {
                             col.spawn(text(&format!("Experience: {}", e.xp), font, 3.2, WHITE));
                         }
+                        // The items to choose one of: click one, the gold frame is the choice.
+                        if !e.rewards.is_empty() {
+                            col.spawn(text("Choose your reward:", font, 3.2, DIM));
+                            col.spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Vh(0.8),
+                                ..default()
+                            })
+                            .with_children(|list| {
+                                for r in &e.rewards {
+                                    let mut b = list.spawn((
+                                        RewardChoice(r.entry),
+                                        Button,
+                                        Node {
+                                            flex_direction: FlexDirection::Row,
+                                            align_items: AlignItems::Center,
+                                            column_gap: Val::Vh(1.2),
+                                            padding: UiRect::all(Val::Vh(0.6)),
+                                            border: UiRect::all(Val::Vh(0.3)),
+                                            border_radius: BorderRadius::all(Val::Vh(0.8)),
+                                            ..default()
+                                        },
+                                        BorderColor::all(if r.entry == chosen {
+                                            crate::GOLD
+                                        } else {
+                                            Color::NONE
+                                        }),
+                                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35)),
+                                    ));
+                                    b.with_children(|row| {
+                                        let mut icon = row.spawn(Node {
+                                            width: Val::Vh(5.0),
+                                            height: Val::Vh(5.0),
+                                            ..default()
+                                        });
+                                        if let Some(h) = icons.get(&r.entry) {
+                                            icon.insert(ImageNode::new(h.clone()));
+                                        }
+                                        row.spawn(text(&r.name, font, 3.0, WHITE));
+                                    });
+                                }
+                            });
+                        }
                         col.spawn(Node {
                             flex_grow: 1.0,
                             ..default()
@@ -572,7 +631,8 @@ fn spawn_panel(
                             row.spawn((
                                 PanelButton {
                                     panel: id,
-                                    answer: Answer::Accept(e.quest),
+                                    // The reward is filled in as it is pressed.
+                                    answer: Answer::Accept(e.quest, 0),
                                 },
                                 button(RED, 26.0),
                             ))
@@ -646,13 +706,38 @@ fn show_portrait(
     }
 }
 
-fn press_buttons(buttons: Query<(&PanelButton, &Interaction), Changed<Interaction>>) {
+fn press_buttons(
+    buttons: Query<(&PanelButton, &Interaction), Changed<Interaction>>,
+    choices: Query<(&RewardChoice, &Interaction), Changed<Interaction>>,
+    mut frames: Query<(&RewardChoice, &mut BorderColor)>,
+    mut pick: ResMut<RewardPick>,
+) {
+    for (c, i) in &choices {
+        if *i == Interaction::Pressed {
+            pick.1 = c.0;
+            for (f, mut edge) in &mut frames {
+                *edge = BorderColor::all(if f.0 == c.0 { crate::GOLD } else { Color::NONE });
+            }
+        }
+    }
     for (b, i) in &buttons {
         if *i == Interaction::Pressed {
-            quest_board::answer(b.panel, b.answer);
+            let answer = match b.answer {
+                Answer::Accept(q, _) => Answer::Accept(q, pick.1),
+                a => a,
+            };
+            quest_board::answer(b.panel, answer);
         }
     }
 }
+
+/// A reward item's row on the window: click to choose it.
+#[derive(Component)]
+struct RewardChoice(u32);
+
+/// The reward chosen: for which window and tab, and the item.
+#[derive(Resource, Default)]
+struct RewardPick((u64, usize), u32);
 
 fn light_buttons(
     mut buttons: Query<(&Interaction, &Shade, &mut BackgroundColor), Changed<Interaction>>,

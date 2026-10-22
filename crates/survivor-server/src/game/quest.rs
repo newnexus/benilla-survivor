@@ -189,6 +189,15 @@ impl Game {
         }
     }
 
+    /// A quest window left open (it stays when the player walks off) gives way to the window of
+    /// whoever the player walks up to next: a trainer, the spirit healer, the collection.
+    pub(super) fn close_quest_panel(&mut self) {
+        if self.open_panel.take().is_some() {
+            quest_board::clear();
+            self.talked = None;
+        }
+    }
+
     /// `CMSG_QUESTGIVER_QUERY_QUEST`: a row of the list was picked.
     pub(crate) fn quest_query_quest(&mut self, guid: u64, id: u32) {
         let Some(entry) = self.npc_entry(guid) else { return };
@@ -219,6 +228,20 @@ impl Game {
                     objectives: self.fill(&q.objectives),
                     money: q.money,
                     xp: q.xp,
+                    // Equipment only: a reward goes into the collection.
+                    rewards: q
+                        .rewards
+                        .iter()
+                        .filter(|&&e| self.slot_of_item(e).is_some())
+                        .filter_map(|&e| {
+                            let t = self.data.items.get(&e)?;
+                            Some(crate::quest_board::RewardItem {
+                                entry: e,
+                                name: t.name.clone(),
+                                display: t.display,
+                            })
+                        })
+                        .collect(),
                 })
             })
             .collect();
@@ -244,11 +267,15 @@ impl Game {
         }
         self.open_panel = None;
         quest_board::clear();
-        let Answer::Accept(quest) = answer else { return };
+        let Answer::Accept(quest, item) = answer else { return };
         // Handing in or taking it; either way the giver's window comes back with the rest.
         let Some(entry) = self.npc_entry(guid) else { return };
         if self.rewardable(entry).iter().any(|q| q.id == quest) {
             self.quest_turn_in(guid, quest);
+            let offered = self.quest(quest).is_some_and(|q| q.rewards.contains(&item));
+            if offered && self.quests.done.contains(&quest) {
+                self.quest_reward_item(item);
+            }
         } else {
             self.quest_accept(guid, quest);
         }
@@ -424,8 +451,14 @@ impl Game {
             .filter_map(|v| v.trim().parse().ok())
             .filter(|&id| self.quest(id).is_some())
             .collect();
+        // `$SURVIVOR_QUESTS_FINISHED=1`: seeded with every objective met, for trying a hand-in.
+        let finished = std::env::var("SURVIVOR_QUESTS_FINISHED").as_deref() == Ok("1");
         for (slot, id) in ids.into_iter().take(SLOTS).enumerate() {
-            self.quests.slots[slot] = Some(Active { id, counts: [0; 4] });
+            let counts = match (finished, self.quest(id)) {
+                (true, Some(q)) => q.kills.map(|(_, n)| n),
+                _ => [0; 4],
+            };
+            self.quests.slots[slot] = Some(Active { id, counts });
             self.write_slot(slot);
         }
     }

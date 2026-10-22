@@ -524,6 +524,37 @@ impl Game {
         self.save();
     }
 
+    /// A quest's reward: into the collection, its survivor stats rolled at its own quality (a
+    /// common 1.12 item is common, an uncommon one uncommon), worn when its slot is empty.
+    pub(super) fn quest_reward_item(&mut self, entry: u32) {
+        let Some(slot) = self.slot_of_item(entry) else { return };
+        let quality = self.data.items.get(&entry).map_or(1, |t| t.quality);
+        let mut item = self.roll_item(entry);
+        let rarity = quality.saturating_sub(1).min(4) as u8;
+        if item.rarity != rarity {
+            let main = item.stats[0].0;
+            item.rarity = rarity;
+            item.stats = vec![(main, main.base() * RARITY_RATE[usize::from(rarity)])];
+        }
+        let id = self.next_owned;
+        self.next_owned += 1;
+        item.owned = Some(id);
+        let name = self.data.items.get(&entry).map_or_else(String::new, |t| t.name.clone());
+        eprintln!("survivor: quest reward {name}");
+        self.send(
+            opcode::SMSG_NOTIFICATION,
+            &packets::notification(&format!("Received: {name}, in your collection")),
+        );
+        self.collection.push(OwnedItem {
+            id,
+            item,
+            favourite: false,
+        });
+        self.loadout.entry(slot).or_insert(id);
+        self.wear_loadout();
+        self.save();
+    }
+
     /// The stats of the chest gear worn now as `entry`, for its tooltip.
     pub(crate) fn item_description(&self, entry: u32) -> Option<String> {
         self.run_gear.values().find(|g| g.entry == entry).map(GearItem::description)
@@ -644,11 +675,11 @@ impl Game {
             || self.paused()
             || self.player.dead_until.is_some()
             || !self.walked
-            || self.open_panel.is_some()
         {
             return;
         }
         if crate::town::TOWNS.iter().any(|t| near(t) <= ARMORY_RANGE) {
+            self.close_quest_panel();
             self.post_armory();
         }
     }

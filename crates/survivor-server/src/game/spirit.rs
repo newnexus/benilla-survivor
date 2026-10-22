@@ -154,12 +154,12 @@ impl Game {
             || self.paused()
             || self.player.dead_until.is_some()
             || !self.walked
-            || self.open_panel.is_some()
             || self.armory_open.is_some()
         {
             return;
         }
         if healers.iter().any(|&h| super::dist2d(h, me) <= RANGE) {
+            self.close_quest_panel();
             self.post_spirit();
         }
     }

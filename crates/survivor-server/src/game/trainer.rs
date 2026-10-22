@@ -85,13 +85,13 @@ impl Game {
         if self.in_run()
             || self.paused()
             || !self.walked
-            || self.open_panel.is_some()
             || self.armory_open.is_some()
             || self.spirit_open.is_some()
         {
             return;
         }
         if let Some(name) = self.trainer_near(now, RANGE) {
+            self.close_quest_panel();
             self.post_trainer(name);
         }
     }
