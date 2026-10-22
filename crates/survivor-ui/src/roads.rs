@@ -12,8 +12,9 @@ use crate::ground::Ground;
 /// The grid's cell, in yards, and how far past the barrier it reaches.
 const CELL: f32 = 1.0;
 const MARGIN: f32 = 8.0;
-/// A yard of grass costs this many yards of road.
-const OFF_ROAD: f32 = 3.5;
+/// A yard of grass costs this many yards of road: dear enough that a way keeps to the road for
+/// as long as the road leads anywhere near, and leaves it only where it must.
+const OFF_ROAD: f32 = 25.0;
 /// Road this strong counts as fully road: the paint is speckled.
 const FULL: f32 = 0.45;
 
