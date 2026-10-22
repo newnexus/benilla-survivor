@@ -233,7 +233,8 @@ fn show_purse(
                 Purse,
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Vh(2.0),
+                    // Left of the minimap, under the buffs' row.
+                    right: Val::Vh(crate::PURSE_RIGHT),
                     top: Val::Vh(crate::PURSE_TOP),
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
