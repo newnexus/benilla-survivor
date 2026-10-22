@@ -287,6 +287,8 @@ pub(crate) struct Game {
     pick_due: Option<Instant>,
     /// The Hearthstone charging, on a run.
     hearth: Option<hearth::Hearth>,
+    /// A gather object being gathered.
+    gathering: Option<gather::Gathering>,
     /// The root and unroot counter the client's acks echo.
     root_counter: u32,
     /// What the player carries and wears.
@@ -484,6 +486,7 @@ impl Game {
             pick: None,
             pick_due: None,
             hearth: None,
+            gathering: None,
             root_counter: 0,
             pack,
             meals: Vec::new(),

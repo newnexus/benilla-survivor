@@ -427,6 +427,7 @@ impl Game {
         }
         p.gcd_until += by;
         self.shift_hearth(by);
+        self.shift_gathering(by);
         let p = &mut self.player;
         p.in_combat_until += by;
         p.next_swing += by;

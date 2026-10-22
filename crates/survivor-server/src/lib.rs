@@ -123,6 +123,32 @@ pub mod hearth {
     }
 }
 
+/// A pickup charging (a gather object being gathered), for the screen: where, how far along,
+/// and the icon to show.
+pub mod pickup {
+    use std::sync::Mutex;
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct Pickup {
+        /// WoW world coordinates of the object.
+        pub pos: [f32; 3],
+        /// 0 to 1.
+        pub part: f32,
+        /// An interface texture path, without `.blp`.
+        pub icon: &'static str,
+    }
+
+    static NOW: Mutex<Option<Pickup>> = Mutex::new(None);
+
+    pub fn current() -> Option<Pickup> {
+        *NOW.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn set(p: Option<Pickup>) {
+        *NOW.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = p;
+    }
+}
+
 /// The player's purse, copper, for the screen's corner.
 pub mod purse {
     use std::sync::atomic::{AtomicU32, Ordering};
