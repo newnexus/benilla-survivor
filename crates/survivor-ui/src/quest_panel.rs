@@ -167,9 +167,8 @@ fn show_panel(
             panel.as_ref().map_or(0, |p| p.giver),
             std::sync::atomic::Ordering::Relaxed,
         );
-        let voice = line.and_then(|(_, e)| {
-            survivor_server::quest_voice(e.quest, e.kind == PanelKind::Reward)
-        });
+        let voice = line
+            .and_then(|(_, e)| survivor_server::quest_voice(e.quest, e.kind == PanelKind::Reward));
         let spoken = voice.is_some();
         benilla_app::survivor_voice(voice);
         if let Some((_, e)) = line {
@@ -183,8 +182,8 @@ fn show_panel(
         }
     }
     // On to the objectives: the talk ends, or the player goes on.
-    let go_on = keys.just_pressed(KeyCode::Space)
-        || continues.iter().any(|i| *i == Interaction::Pressed);
+    let go_on =
+        keys.just_pressed(KeyCode::Space) || continues.iter().any(|i| *i == Interaction::Pressed);
     if line.is_some() && talk.step == Step::Talk && (go_on || now - talk.start >= talk.seconds) {
         talk.step = Step::Decide;
     }
@@ -197,8 +196,12 @@ fn show_panel(
     }
     shown.panel = None;
     let Some(panel) = panel else { return };
-    let Some(library) = &screen.library else { return };
-    let library = library.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(library) = &screen.library else {
+        return;
+    };
+    let library = library
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // Gold, silver and copper side by side in one texture, a quarter of its width each.
     let coins: [Option<Coin>; 3] = library
         .blp("Interface\\MoneyFrame\\UI-MoneyIcons")
@@ -351,10 +354,13 @@ fn spawn_panel(
                         ))
                         .with_children(|b| {
                             b.spawn(text(mark, title_font, 3.4, crate::GOLD));
-                            b.spawn((text(&q.title, font, 2.8, WHITE), Node {
-                                flex_shrink: 1.0,
-                                ..default()
-                            }));
+                            b.spawn((
+                                text(&q.title, font, 2.8, WHITE),
+                                Node {
+                                    flex_shrink: 1.0,
+                                    ..default()
+                                },
+                            ));
                         });
                     }
                 });
@@ -447,23 +453,24 @@ fn spawn_panel(
                     },
                     BackgroundColor(PAGE_EDGE),
                 ));
-                s.spawn((
-                    StoryScroll,
-                    RelativeCursorPosition::default(),
-                    ScrollPosition::default(),
-                    Node {
-                        flex_grow: 1.0,
-                        flex_basis: Val::Px(0.0),
-                        overflow: Overflow::scroll_y(),
-                        flex_direction: FlexDirection::Column,
-                        ..default()
-                    },
-                ))
-                .with_children(|t| {
-                    t.spawn((Story(e.text.clone()), text("", font, 3.4, WHITE)));
-                });
-                // While the giver talks: go on without waiting.
+                // Step one: the story as it is told. Step two takes its place on the same page.
                 if step == Step::Talk {
+                    s.spawn((
+                        StoryScroll,
+                        RelativeCursorPosition::default(),
+                        ScrollPosition::default(),
+                        Node {
+                            flex_grow: 1.0,
+                            flex_basis: Val::Px(0.0),
+                            overflow: Overflow::scroll_y(),
+                            flex_direction: FlexDirection::Column,
+                            ..default()
+                        },
+                    ))
+                    .with_children(|t| {
+                        t.spawn((Story(e.text.clone()), text("", font, 3.4, WHITE)));
+                    });
+                    // While the giver talks: go on without waiting.
                     s.spawn(Node {
                         flex_direction: FlexDirection::Row,
                         justify_content: JustifyContent::FlexEnd,
@@ -476,90 +483,93 @@ fn spawn_panel(
                             });
                     });
                 }
-            });
-            // Then: what to do, what it pays, and the answer.
-            if step == Step::Decide {
-                root.spawn(page(Node {
-                    width: Val::Vh(58.0),
-                    max_width: Val::Vw(36.0),
-                    height: Val::Vh(74.0),
-                    ..default()
-                }))
-                .with_children(|col| {
-                    if e.kind == PanelKind::Offer && !e.objectives.is_empty() {
-                        col.spawn(text("Quest Objectives", title_font, 4.4, crate::GOLD));
-                        col.spawn(text(&e.objectives, font, 3.2, WHITE));
-                    }
-                    col.spawn(text("Rewards", title_font, 4.4, crate::GOLD));
-                    if e.money > 0 {
-                        col.spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Vh(1.0),
-                            ..default()
-                        })
-                        .with_children(|line| {
-                            line.spawn(text("You will receive:", font, 3.2, DIM));
-                            let (g, s, c) = (e.money / 10_000, e.money / 100 % 100, e.money % 100);
-                            for (amount, coin) in [(g, &coins[0]), (s, &coins[1]), (c, &coins[2])] {
-                                if amount == 0 {
-                                    continue;
-                                }
-                                line.spawn(text(&amount.to_string(), font, 3.4, WHITE));
-                                if let Some(coin) = coin {
-                                    line.spawn((
-                                        ImageNode {
-                                            image: coin.image.clone(),
-                                            rect: Some(coin.rect),
-                                            ..default()
-                                        },
-                                        Node {
-                                            width: Val::Vh(3.0),
-                                            height: Val::Vh(3.0),
-                                            ..default()
-                                        },
-                                    ));
-                                }
-                            }
-                        });
-                    }
-                    if e.xp > 0 {
-                        col.spawn(text(&format!("Experience: {}", e.xp), font, 3.2, WHITE));
-                    }
-                    col.spawn(Node {
+                // Then: what to do, what it pays, and the answer.
+                if step == Step::Decide {
+                    s.spawn(Node {
+                        flex_direction: FlexDirection::Column,
                         flex_grow: 1.0,
-                        ..default()
-                    });
-                    col.spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        justify_content: JustifyContent::SpaceBetween,
-                        column_gap: Val::Vh(2.0),
+                        row_gap: Val::Vh(1.2),
                         ..default()
                     })
-                    .with_children(|row| {
-                        row.spawn((
-                            PanelButton {
-                                panel: id,
-                                answer: Answer::Close,
-                            },
-                            button(DARK, 24.0),
-                        ))
-                        .with_children(|b| {
-                            b.spawn(text("Decline", font, 4.0, crate::GOLD));
+                    .with_children(|col| {
+                        if e.kind == PanelKind::Offer && !e.objectives.is_empty() {
+                            col.spawn(text("Quest Objectives", title_font, 4.4, crate::GOLD));
+                            col.spawn(text(&e.objectives, font, 3.2, WHITE));
+                        }
+                        col.spawn(text("Rewards", title_font, 4.4, crate::GOLD));
+                        if e.money > 0 {
+                            col.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Vh(1.0),
+                                ..default()
+                            })
+                            .with_children(|line| {
+                                line.spawn(text("You will receive:", font, 3.2, DIM));
+                                let (g, s, c) =
+                                    (e.money / 10_000, e.money / 100 % 100, e.money % 100);
+                                for (amount, coin) in
+                                    [(g, &coins[0]), (s, &coins[1]), (c, &coins[2])]
+                                {
+                                    if amount == 0 {
+                                        continue;
+                                    }
+                                    line.spawn(text(&amount.to_string(), font, 3.4, WHITE));
+                                    if let Some(coin) = coin {
+                                        line.spawn((
+                                            ImageNode {
+                                                image: coin.image.clone(),
+                                                rect: Some(coin.rect),
+                                                ..default()
+                                            },
+                                            Node {
+                                                width: Val::Vh(3.0),
+                                                height: Val::Vh(3.0),
+                                                ..default()
+                                            },
+                                        ));
+                                    }
+                                }
+                            });
+                        }
+                        if e.xp > 0 {
+                            col.spawn(text(&format!("Experience: {}", e.xp), font, 3.2, WHITE));
+                        }
+                        col.spawn(Node {
+                            flex_grow: 1.0,
+                            ..default()
                         });
-                        row.spawn((
-                            PanelButton {
-                                panel: id,
-                                answer: Answer::Accept(e.quest),
-                            },
-                            button(RED, 26.0),
-                        ))
-                        .with_children(|b| {
-                            b.spawn(text(accept_label, font, 4.4, crate::GOLD));
+                        col.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceBetween,
+                            column_gap: Val::Vh(2.0),
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            row.spawn((
+                                PanelButton {
+                                    panel: id,
+                                    answer: Answer::Close,
+                                },
+                                button(DARK, 24.0),
+                            ))
+                            .with_children(|b| {
+                                b.spawn(text("Decline", font, 4.0, crate::GOLD));
+                            });
+                            row.spawn((
+                                PanelButton {
+                                    panel: id,
+                                    answer: Answer::Accept(e.quest),
+                                },
+                                button(RED, 26.0),
+                            ))
+                            .with_children(|b| {
+                                b.spawn(text(accept_label, font, 4.4, crate::GOLD));
+                            });
                         });
                     });
-                });
-            }
+                }
+            });
         })
         .id()
 }
@@ -575,7 +585,11 @@ fn reveal_story(
     for (story, mut text) in &mut stories {
         let total = story.0.chars().count();
         let shown = ((total as f32 * told).ceil() as usize).min(total);
-        let end = story.0.char_indices().nth(shown).map_or(story.0.len(), |(i, _)| i);
+        let end = story
+            .0
+            .char_indices()
+            .nth(shown)
+            .map_or(story.0.len(), |(i, _)| i);
         if text.0.len() != end {
             text.0 = story.0[..end].to_owned();
             if talk.step == Step::Talk {
@@ -633,7 +647,11 @@ fn light_buttons(
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
     for (i, shade, mut bg) in &mut buttons {
-        bg.0 = if *i == Interaction::None { shade.0 } else { shade.1 };
+        bg.0 = if *i == Interaction::None {
+            shade.0
+        } else {
+            shade.1
+        };
     }
     let vh = window.single().map_or(7.2, |w| w.height() / 100.0);
     for (size, mut f) in &mut texts {
@@ -645,7 +663,15 @@ fn light_buttons(
 fn scroll_text(
     mut wheel: MessageReader<MouseWheel>,
     touches: Res<Touches>,
-    mut areas: Query<(&RelativeCursorPosition, &mut ScrollPosition, &ComputedNode, &UiGlobalTransform), With<StoryScroll>>,
+    mut areas: Query<
+        (
+            &RelativeCursorPosition,
+            &mut ScrollPosition,
+            &ComputedNode,
+            &UiGlobalTransform,
+        ),
+        With<StoryScroll>,
+    >,
 ) {
     let notches: f32 = wheel
         .read()
@@ -683,7 +709,9 @@ pub(crate) fn block_touch(
         let k = node.inverse_scale_factor();
         let centre = at.affine().translation * k;
         let half = node.size * k / 2.0;
-        frames.blockers.push(Rect::from_center_half_size(centre, half));
+        frames
+            .blockers
+            .push(Rect::from_center_half_size(centre, half));
     }
 }
 
