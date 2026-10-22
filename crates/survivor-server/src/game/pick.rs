@@ -139,7 +139,8 @@ impl Game {
             .filter(|c| c.class == self.player.class && self.data.spells.contains_key(&c.spell))
             .filter_map(|c| {
                 let kind = self.kind(c.spell);
-                if !matches!(kind, SpellKind::Damage | SpellKind::Defensive) {
+                // Damage skills only, six at most: defensive ones are for the trainers.
+                if kind != SpellKind::Damage {
                     return None;
                 }
                 let replaces = match known.get(&c.first) {

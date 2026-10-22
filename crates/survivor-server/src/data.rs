@@ -199,6 +199,63 @@ pub(crate) struct ClassSpell {
     pub(crate) req_level: u32,
 }
 
+impl WorldData {
+    /// The rank chains, from the spells themselves: the world data's `spell_chain` misses most
+    /// of the warrior's and the rogue's. A class's trainer spells and starting spells that share
+    /// a name are one chain, ranked by their "Rank N"; a starting rank no trainer teaches joins
+    /// the class's list (at level 1) so its next rank is known as its upgrade.
+    fn link_rank_chains(&mut self) {
+        let rank_of = |s: &SpellInfo| -> u32 {
+            s.rank_text
+                .trim()
+                .strip_prefix("Rank ")
+                .and_then(|n| n.trim().parse().ok())
+                .unwrap_or(1)
+        };
+        let classes: std::collections::BTreeSet<u8> = self.class_spells.iter().map(|c| c.class).collect();
+        for class in classes {
+            let known: std::collections::HashSet<u32> = self
+                .class_spells
+                .iter()
+                .filter(|c| c.class == class)
+                .map(|c| c.spell)
+                .collect();
+            let starts: Vec<u32> = self
+                .start_actions
+                .iter()
+                .filter(|a| a.0 == class && a.3 == 0 && !known.contains(&a.2))
+                .map(|a| a.2)
+                .filter(|s| self.spells.contains_key(s))
+                .collect();
+            for s in starts {
+                self.class_spells.push(ClassSpell {
+                    class,
+                    spell: s,
+                    first: s,
+                    rank: 1,
+                    req_level: 1,
+                });
+            }
+            let mut by_name: HashMap<String, Vec<(u32, u32)>> = HashMap::new();
+            for c in self.class_spells.iter().filter(|c| c.class == class) {
+                if let Some(info) = self.spells.get(&c.spell) {
+                    by_name.entry(info.name.clone()).or_default().push((rank_of(info), c.spell));
+                }
+            }
+            for mut chain in by_name.into_values() {
+                chain.sort_unstable();
+                let first = chain[0].1;
+                for (k, &(_, spell)) in chain.iter().enumerate() {
+                    for c in self.class_spells.iter_mut().filter(|c| c.class == class && c.spell == spell) {
+                        c.first = first;
+                        c.rank = k as u32 + 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct WorldData {
     pub(crate) creatures: HashMap<u32, CreatureTemplate>,
@@ -528,6 +585,7 @@ impl WorldData {
                 num(r.get(3)),
             ));
         }
+        d.link_rank_chains();
         // A town's people offer only what the server answers: the quest givers keep their mark
         // (`UNIT_NPC_FLAG_QUESTGIVER`), vendors and trainers stay plain townsfolk for now.
         let talks: std::collections::HashSet<u32> =

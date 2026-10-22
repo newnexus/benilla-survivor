@@ -150,7 +150,8 @@ impl Game {
             .filter_map(|&s| {
                 let info = self.spell(s)?;
                 let kind = info.kind;
-                if !matches!(kind, SpellKind::Damage | SpellKind::Defensive) {
+                // Level-ups improve the damage skills only; defensive ones are the trainers'.
+                if kind != SpellKind::Damage {
                     return None;
                 }
                 let heals = info.effects.contains(&10)
