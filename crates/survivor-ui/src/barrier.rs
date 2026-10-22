@@ -39,7 +39,7 @@ pub(crate) struct Flame {
 }
 
 /// The barrier's gold.
-const GOLD: Color = Color::srgb(1.0, 0.72, 0.18);
+pub(crate) const GOLD: Color = Color::srgb(1.0, 0.72, 0.18);
 
 /// A flame material of `color`: glowing, see-through, both faces.
 pub(crate) fn flame(color: Color) -> FlameMaterial {

@@ -1,11 +1,15 @@
-//! In town, a trail of small yellow footsteps on the ground from the player to every quest giver
-//! of that town with something for them ([`survivor_server::trails`]). The steps keep to the
-//! roads ([`crate::roads`]) and lie on the terrain, and a glow walks along them toward the giver.
+//! In town, a trail of small burning footsteps on the ground from the player to every quest giver
+//! of that town with something for them ([`survivor_server::trails`]): footprints of the
+//! barrier's golden flame (`shaders/footstep.wgsl`), with a short ring of the barrier's tongues
+//! rising round each, tallest at the toe (`shaders/footflame.wgsl`). The steps keep to the roads
+//! ([`crate::roads`]) and lie on the terrain, and a glow walks along them toward the giver.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
+use bevy::shader::ShaderRef;
 use survivor_server::town::{town_at, TOWNS};
 
 use crate::ground::Ground;
@@ -26,24 +30,76 @@ const CLEAR_END: f32 = 1.5;
 const FLOW: f32 = 6.0;
 const PULSE: f32 = 16.0;
 const TAIL: f32 = 7.0;
-/// A step's opacity between glows, and how the steps thin out near both ends.
-const DIM: f32 = 0.3;
+/// A step's strength between glows, and how the steps thin out near both ends.
+const DIM: f32 = 0.35;
 const FADE: f32 = 2.5;
-/// Opacities the steps are drawn at: one material each.
+/// Strengths the steps are drawn at: one material each.
 const LEVELS: usize = 8;
 /// The way is found again once the player has moved this far.
 const REPLAN: f32 = 0.75;
-const YELLOW: Color = Color::srgb(1.0, 0.85, 0.2);
+/// The flame ring round a footprint: its radii as parts of the print's, its height, how many
+/// tongues round it, and the points it is drawn through.
+const RING_ACROSS: f32 = 0.42;
+const RING_ALONG: f32 = 0.44;
+const RING_HEIGHT: f32 = 0.6;
+const RING_TONGUES: f32 = 4.0;
+const RING_POINTS: usize = 24;
+/// Where round the print the fire is strongest: the toe (`true`) or the heel.
+const FIRE_AT_TOE: bool = true;
+
+/// A footstep's flame: a fragment stage of our own over the stock mesh pipeline.
+type StepMaterial = ExtendedMaterial<StandardMaterial, Ember>;
+
+/// The flame's colour (alpha: the step's strength) and the footprint's shape.
+#[derive(Asset, AsBindGroup, Clone, TypePath)]
+struct Ember {
+    #[uniform(100)]
+    tint: LinearRgba,
+    #[texture(101)]
+    #[sampler(102)]
+    mask: Handle<Image>,
+}
+
+impl MaterialExtension for Ember {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://survivor_ui/shaders/footstep.wgsl".into()
+    }
+}
+
+/// The flames rising from a footstep.
+type TongueMaterial = ExtendedMaterial<StandardMaterial, Tongues>;
+
+/// The flame's colour; alpha, the step's strength.
+#[derive(Asset, AsBindGroup, Clone, TypePath)]
+struct Tongues {
+    #[uniform(100)]
+    tint: LinearRgba,
+}
+
+impl MaterialExtension for Tongues {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://survivor_ui/shaders/footflame.wgsl".into()
+    }
+}
 
 pub(crate) fn plugin(app: &mut App) {
-    app.add_systems(Startup, setup).add_systems(Update, (plan, draw).chain());
+    bevy::asset::embedded_asset!(app, "shaders/footstep.wgsl");
+    bevy::asset::embedded_asset!(app, "shaders/footflame.wgsl");
+    app.add_plugins((
+        MaterialPlugin::<StepMaterial>::default(),
+        MaterialPlugin::<TongueMaterial>::default(),
+    ))
+        .add_systems(Startup, setup)
+        .add_systems(Update, (plan, draw).chain());
 }
 
 #[derive(Resource)]
 struct StepLook {
     mesh: Handle<Mesh>,
+    ring: Handle<Mesh>,
     /// From faint to full.
-    materials: Vec<Handle<StandardMaterial>>,
+    materials: Vec<Handle<StepMaterial>>,
+    tongues: Vec<Handle<TongueMaterial>>,
 }
 
 /// The ground reader and each town's road grid, made when first needed. Not `Send`: the
@@ -73,30 +129,63 @@ struct Step {
 #[derive(Component)]
 struct Footprint;
 
+/// A footprint's flame ring, its child.
+#[derive(Component)]
+struct Ring;
+
+/// The see-through glow both parts are drawn with: unlit and added onto what is behind,
+/// depth-tested, writing no depth.
+fn glow_base() -> StandardMaterial {
+    StandardMaterial {
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        cull_mode: None,
+        fog_enabled: false,
+        depth_bias: 20.0,
+        ..default()
+    }
+}
+
+/// Gold at strength `k` of [`LEVELS`].
+fn gold(k: usize) -> LinearRgba {
+    crate::barrier::GOLD.to_linear().with_alpha(k as f32 / LEVELS as f32)
+}
+
 fn setup(
     world: &mut World,
 ) {
     world.insert_non_send_resource(Planner::default());
     world.init_resource::<Steps>();
     let image = world.resource_mut::<Assets<Image>>().add(footprint_image());
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(footprint_mesh());
-    let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+    let mut meshes = world.resource_mut::<Assets<Mesh>>();
+    let (mesh, ring) = (meshes.add(footprint_mesh()), meshes.add(ring_mesh()));
+    let mut materials = world.resource_mut::<Assets<StepMaterial>>();
     let materials = (1..=LEVELS)
         .map(|k| {
-            materials.add(StandardMaterial {
-                base_color: YELLOW.with_alpha(k as f32 / LEVELS as f32),
-                base_color_texture: Some(image.clone()),
-                emissive: LinearRgba::rgb(0.6, 0.45, 0.05),
-                unlit: true,
-                alpha_mode: AlphaMode::Blend,
-                cull_mode: None,
-                fog_enabled: false,
-                depth_bias: 20.0,
-                ..default()
+            materials.add(StepMaterial {
+                base: glow_base(),
+                extension: Ember {
+                    tint: gold(k),
+                    mask: image.clone(),
+                },
             })
         })
         .collect();
-    world.insert_resource(StepLook { mesh, materials });
+    let mut tongue_materials = world.resource_mut::<Assets<TongueMaterial>>();
+    let tongues = (1..=LEVELS)
+        .map(|k| {
+            tongue_materials.add(TongueMaterial {
+                base: glow_base(),
+                extension: Tongues { tint: gold(k) },
+            })
+        })
+        .collect();
+    world.insert_resource(StepLook {
+        mesh,
+        ring,
+        materials,
+        tongues,
+    });
 }
 
 /// A bare left footprint, toe toward v = 0 and the big toe on the right (+u): five toes, then
@@ -143,7 +232,8 @@ fn footprint_image() -> Image {
             if let Some((lo, hi)) = sole(p[1]) {
                 inside = inside.max((p[0] - lo).min(hi - p[0]));
             }
-            let a = (inside / 0.05 + 0.5).clamp(0.0, 1.0);
+            // A wide soft edge: the shader burns brightest there.
+            let a = (inside / 0.09 + 0.35).clamp(0.0, 1.0);
             let px = &mut rgba[(y * W + x) * 4..][..4];
             px.copy_from_slice(&[255, 255, 255, (a * 255.0) as u8]);
         }
@@ -159,6 +249,41 @@ fn footprint_image() -> Image {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     )
+}
+
+/// A short wall standing round the footprint, an ellipse about its sole. uv.x runs round it in
+/// tongues, uv.y from the ground (0) to the top (1); the second uv's x is how near the fire's
+/// strong end (the toe, -Z, or the heel) each point is, 0 to 1.
+fn ring_mesh() -> Mesh {
+    let (a, b) = (WIDTH * RING_ACROSS, LENGTH * RING_ALONG);
+    let (mut positions, mut normals, mut uvs, mut uvs_b) = (vec![], vec![], vec![], vec![]);
+    for k in 0..=RING_POINTS {
+        let t = k as f32 / RING_POINTS as f32;
+        let angle = t * std::f32::consts::TAU;
+        let (x, z) = (a * angle.sin(), -b * angle.cos());
+        // 1 at the toe (angle 0, -Z), 0 at the heel.
+        let toe = 0.5 + 0.5 * angle.cos();
+        let strong = if FIRE_AT_TOE { toe } else { 1.0 - toe };
+        let out = Vec3::new(angle.sin() / a, 0.0, -angle.cos() / b).normalize();
+        for (y, v) in [(0.0, 0.0), (RING_HEIGHT, 1.0)] {
+            positions.push([x, y, z]);
+            normals.push(out.to_array());
+            uvs.push([t * RING_TONGUES, v]);
+            uvs_b.push([strong, 0.0]);
+        }
+    }
+    let indices = (0..RING_POINTS as u32)
+        .flat_map(|k| {
+            let (a, b, c, d) = (2 * k, 2 * k + 1, 2 * k + 2, 2 * k + 3);
+            [a, c, b, b, c, d]
+        })
+        .collect();
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, uvs_b)
+        .with_inserted_indices(Indices::U32(indices))
 }
 
 /// A flat quad facing up, its toe toward -Z (Bevy's forward).
@@ -303,24 +428,37 @@ fn draw(
     time: Res<Time>,
     steps: Res<Steps>,
     mut prints: Query<
-        (&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>),
+        (
+            &mut Transform,
+            &mut Visibility,
+            &mut MeshMaterial3d<StepMaterial>,
+            &Children,
+        ),
         With<Footprint>,
     >,
+    mut rings: Query<&mut MeshMaterial3d<TongueMaterial>, With<Ring>>,
 ) {
     let Some(look) = look else { return };
     let have = prints.iter().count();
     for _ in have..steps.0.len() {
-        commands.spawn((
-            Footprint,
-            Mesh3d(look.mesh.clone()),
-            MeshMaterial3d(look.materials[0].clone()),
-            Transform::default(),
-            Visibility::Hidden,
-        ));
+        commands
+            .spawn((
+                Footprint,
+                Mesh3d(look.mesh.clone()),
+                MeshMaterial3d(look.materials[0].clone()),
+                Transform::default(),
+                Visibility::Hidden,
+            ))
+            .with_child((
+                Ring,
+                Mesh3d(look.ring.clone()),
+                MeshMaterial3d(look.tongues[0].clone()),
+                Transform::default(),
+            ));
     }
     let head = time.elapsed_secs() * FLOW;
     let mut it = steps.0.iter();
-    for (mut tf, mut vis, mut material) in &mut prints {
+    for (mut tf, mut vis, mut material, children) in &mut prints {
         let Some(s) = it.next() else {
             vis.set_if_neq(Visibility::Hidden);
             continue;
@@ -329,10 +467,17 @@ fn draw(
         let behind = (head - s.along).rem_euclid(PULSE);
         let glow = (1.0 - behind / TAIL).max(0.0);
         let fade = (s.edge / FADE).clamp(0.0, 1.0);
-        let alpha = (DIM + (1.0 - DIM) * glow) * (0.25 + 0.75 * fade);
-        let level = ((alpha * LEVELS as f32).ceil() as usize).clamp(1, LEVELS) - 1;
+        let strength = (DIM + (1.0 - DIM) * glow) * (0.25 + 0.75 * fade);
+        let level = ((strength * LEVELS as f32).ceil() as usize).clamp(1, LEVELS) - 1;
         if material.0 != look.materials[level] {
             material.0 = look.materials[level].clone();
+        }
+        for &child in children {
+            if let Ok(mut ring) = rings.get_mut(child) {
+                if ring.0 != look.tongues[level] {
+                    ring.0 = look.tongues[level].clone();
+                }
+            }
         }
         tf.translation = s.at;
         tf.rotation = s.turn;
