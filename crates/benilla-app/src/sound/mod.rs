@@ -11,6 +11,7 @@ use benilla_world::view::WorldCamera;
 
 mod anim_events;
 mod cinematic;
+mod survivor_voice; // survivor
 mod combat;
 mod creature;
 mod death_thud;
@@ -414,6 +415,7 @@ impl Plugin for SoundPlugin {
         liquid_loop::plugin(app);
         zone::plugin(app);
         cinematic::plugin(app);
+        survivor_voice::plugin(app); // survivor
         gameobject::plugin(app);
         anim_events::plugin(app);
         emitter_pool::plugin(app);

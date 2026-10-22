@@ -220,6 +220,23 @@ pub static SURVIVOR_LEVEL_RISES_ONLY: std::sync::atomic::AtomicBool =
 pub static SURVIVOR_FX_RATES: std::sync::Mutex<Vec<(String, f32)>> =
     std::sync::Mutex::new(Vec::new());
 
+/// survivor: a game mode's spoken line, encoded audio (mp3, ogg, wav), or `None` to stop the
+/// line playing: each call cuts the last one off. Played by `sound::survivor_voice`.
+pub fn survivor_voice(bytes: Option<Vec<u8>>) {
+    if let Ok(mut v) = SURVIVOR_VOICE.lock() {
+        v.0 += 1;
+        v.1 = bytes;
+    }
+}
+
+static SURVIVOR_VOICE: std::sync::Mutex<(u64, Option<Vec<u8>>)> = std::sync::Mutex::new((0, None));
+
+/// survivor: the voice request newer than `seen`, if any: its number and bytes.
+pub(crate) fn take_survivor_voice(seen: u64) -> Option<(u64, Option<Vec<u8>>)> {
+    let mut v = SURVIVOR_VOICE.lock().ok()?;
+    (v.0 != seen).then(|| (v.0, v.1.take()))
+}
+
 /// survivor: the rate [`SURVIVOR_FX_RATES`] names for `path`, else 1.
 pub(crate) fn survivor_fx_rate(path: &str) -> f32 {
     let path = path.to_ascii_lowercase();

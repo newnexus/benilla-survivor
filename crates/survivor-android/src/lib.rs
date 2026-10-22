@@ -15,7 +15,7 @@ const NAME: &str = "Survivor";
 
 /// The APK's data folders, each unpacked file for file (the asset manager lists files, not
 /// folders).
-const DATA_DIRS: [&str; 2] = ["Data", "Data/survivor"];
+const DATA_DIRS: [&str; 3] = ["Data", "Data/survivor", "Data/survivor/voice"];
 
 #[bevy::prelude::bevy_main]
 fn main() {

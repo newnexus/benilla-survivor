@@ -45,6 +45,8 @@ STAGE="$HERE/app/build/survivor-assets/Data"
 mkdir -p "$STAGE/survivor"
 cp -u "$DATA/patch.MPQ" "$STAGE/"
 cp -u "$DATA"/survivor/*.tsv "$STAGE/survivor/"
+# The quest givers' spoken lines (survivor-data with $VOICEOVER_DIR), when the data has them.
+if [ -d "$DATA/survivor/voice" ]; then mkdir -p "$STAGE/survivor/voice"; cp -u "$DATA"/survivor/voice/*.mp3 "$STAGE/survivor/voice/"; fi
 
 # 4. The APK.
 [ -f "$HERE/local.properties" ] || echo "sdk.dir=${UNITY_ANDROID/:/\\:}/SDK" > "$HERE/local.properties"

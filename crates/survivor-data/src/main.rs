@@ -400,6 +400,27 @@ fn export_gathers(
 /// `SMSG_QUEST_QUERY_RESPONSE` and `SMSG_QUESTUPDATE_ADD_KILL` carry it.
 const OBJECTIVE_GAMEOBJECT: i64 = 0x8000_0000;
 
+/// `voice/`: the VoiceOver addon's spoken lines (`$VOICEOVER_DIR`, its unzipped
+/// `AI_VoiceOverData_Vanilla`) for every quest in `quests.tsv`, as it names them:
+/// `<id>-accept.mp3` and `<id>-complete.mp3`. Returns how many it copied.
+fn copy_quest_voices(pack: &Path, out: &Path) -> Result<usize> {
+    let from = pack.join("generated").join("sounds").join("quests");
+    let to = out.join("voice");
+    std::fs::create_dir_all(&to)?;
+    let tsv = std::fs::read_to_string(out.join("quests.tsv"))?;
+    let mut n = 0;
+    for id in tsv.lines().skip(1).filter_map(|l| l.split('\t').next()) {
+        for kind in ["accept", "complete"] {
+            let name = format!("{id}-{kind}.mp3");
+            if from.join(&name).is_file() {
+                std::fs::copy(from.join(&name), to.join(&name))?;
+                n += 1;
+            }
+        }
+    }
+    Ok(n)
+}
+
 /// The towns' guards that walk a beat: vmangos's own patrols of Deathguard Oliver and Deathguard
 /// Phillip through Deathknell (`creature_movement_template`). Each gets a Deathguard Elite at
 /// their side.
@@ -886,6 +907,10 @@ fn main() -> Result<()> {
     std::fs::write(out.join("npcs.tsv"), &npcs)?;
     let gathers = export_gathers(&conn, &chain, &mut zones, &areas, out)?;
     let quests = export_quests(&conn, out, &npcs_used, &used, &gathers)?;
+    if let Some(dir) = std::env::var_os("VOICEOVER_DIR") {
+        let lines = copy_quest_voices(Path::new(&dir), out)?;
+        println!("survivor-data: {lines} quest voice lines");
+    }
 
     let mut creatures = String::from(
         "entry\tname\tlevel_min\tlevel_max\tfaction\tdisplay\tscale\twalk\trun\trank\ttype\t\

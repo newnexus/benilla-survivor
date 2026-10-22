@@ -237,6 +237,13 @@ fn three<T: std::str::FromStr + Default + Copy>(s: Option<&String>) -> [T; 3] {
     out
 }
 
+/// A quest giver's spoken line for `quest` (`voice/<id>-accept.mp3`, or `-complete` when
+/// handing in), from the exported tables' folder, if it has one.
+pub fn quest_voice(quest: u32, complete: bool) -> Option<Vec<u8>> {
+    let kind = if complete { "complete" } else { "accept" };
+    std::fs::read(data_dir()?.join("voice").join(format!("{quest}-{kind}.mp3"))).ok()
+}
+
 /// Where the exported tables live: `$SURVIVOR_DATA`, else `Data\survivor` beside the binary (a
 /// packaged build), else this crate's own `data` folder (a dev build).
 fn data_dir() -> Option<PathBuf> {

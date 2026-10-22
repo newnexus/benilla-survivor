@@ -53,6 +53,8 @@ struct Shown {
     parchment: Option<Handle<Image>>,
     /// The tab open, for the window `.0`.
     tab: (u64, usize),
+    /// The quest whose line was last spoken: the window and its tab.
+    spoken: Option<(u64, usize)>,
 }
 
 /// A quest's tab on the window's left.
@@ -83,6 +85,18 @@ fn show_panel(
         }
     }
     let selected = shown.tab.1;
+    // The giver reads the open quest aloud (the VoiceOver addon's line, `survivor_server::
+    // quest_voice`); another tab or a closed window cuts it off.
+    let line = panel
+        .as_ref()
+        .and_then(|p| p.entries.get(selected).map(|e| ((p.id, selected), e)));
+    if line.map(|l| l.0) != shown.spoken {
+        shown.spoken = line.map(|l| l.0);
+        let bytes = line.and_then(|(_, e)| {
+            survivor_server::quest_voice(e.quest, e.kind == PanelKind::Reward)
+        });
+        benilla_app::survivor_voice(bytes);
+    }
     let wanted = panel.as_ref().map(|p| (p.id, selected, height));
     if wanted == shown.panel {
         return;
