@@ -39,13 +39,17 @@ pub mod run_clock {
 pub mod trails {
     use std::sync::Mutex;
 
-    static GIVERS: Mutex<Vec<[f32; 3]>> = Mutex::new(Vec::new());
+    /// A trail's end: where it leads, and whether it is a trainer's (blue) rather than a quest
+    /// giver's (gold).
+    pub type End = ([f32; 3], bool);
 
-    pub fn current() -> Vec<[f32; 3]> {
+    static GIVERS: Mutex<Vec<End>> = Mutex::new(Vec::new());
+
+    pub fn current() -> Vec<End> {
         GIVERS.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
-    pub(crate) fn set(list: Vec<[f32; 3]>) {
+    pub(crate) fn set(list: Vec<End>) {
         if let Ok(mut g) = GIVERS.lock() {
             *g = list;
         }

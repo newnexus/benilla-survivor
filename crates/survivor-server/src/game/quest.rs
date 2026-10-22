@@ -120,7 +120,8 @@ impl Game {
                     quest::STATUS_AVAILABLE | quest::STATUS_REWARD
                 )
             })
-            .map(|n| n.here(now))
+            .map(|n| (n.here(now), false))
+            .chain(self.trainer_trail(town, now).map(|p| (p, true)))
             .collect();
         crate::trails::set(ends);
     }

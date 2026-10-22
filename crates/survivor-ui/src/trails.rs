@@ -1,5 +1,6 @@
 //! In town, a trail of small burning footsteps on the ground from the player to every quest giver
-//! of that town with something for them ([`survivor_server::trails`]): footprints of the
+//! of that town with something for them, and in blue to the class trainer when it has a new
+//! rank to buy ([`survivor_server::trails`]): footprints of the
 //! barrier's golden flame (`shaders/footstep.wgsl`), with a short ring of the barrier's tongues
 //! rising round each, tallest at the toe (`shaders/footflame.wgsl`). The steps keep to the roads
 //! ([`crate::roads`]) and lie on the terrain. Every few seconds an unseen walker sets out from
@@ -102,9 +103,9 @@ pub(crate) fn plugin(app: &mut App) {
 struct StepLook {
     mesh: Handle<Mesh>,
     ring: Handle<Mesh>,
-    /// From faint to full.
-    materials: Vec<Handle<StepMaterial>>,
-    tongues: Vec<Handle<TongueMaterial>>,
+    /// From faint to full, gold then blue.
+    materials: [Vec<Handle<StepMaterial>>; 2],
+    tongues: [Vec<Handle<TongueMaterial>>; 2],
 }
 
 /// The ground reader and each town's road grid, made when first needed. Not `Send`: the
@@ -113,8 +114,8 @@ struct StepLook {
 struct Planner {
     ground: Option<Ground>,
     roads: Vec<Option<Roads>>,
-    /// The givers the walkers are headed for.
-    ends: Vec<[f32; 3]>,
+    /// The givers (and trainer) the walkers are headed for.
+    ends: Vec<survivor_server::trails::End>,
 }
 
 /// The walkers out, oldest first.
@@ -138,6 +139,8 @@ struct Step {
     edge: f32,
     /// When the player stepped on it or past it.
     eaten: Option<f32>,
+    /// On the way to the trainer: blue, not gold.
+    blue: bool,
 }
 
 impl Step {
@@ -180,9 +183,13 @@ fn glow_base() -> StandardMaterial {
     }
 }
 
-/// Gold at strength `k` of [`LEVELS`].
-fn gold(k: usize) -> LinearRgba {
-    crate::barrier::GOLD.to_linear().with_alpha(k as f32 / LEVELS as f32)
+/// The trainer's trail colour.
+const BLUE: Color = Color::srgb(0.1, 0.45, 1.0);
+
+/// Gold (or the trainer's blue) at strength `k` of [`LEVELS`].
+fn tint(blue: bool, k: usize) -> LinearRgba {
+    let c = if blue { BLUE } else { crate::barrier::GOLD };
+    c.to_linear().with_alpha(k as f32 / LEVELS as f32)
 }
 
 fn setup(
@@ -194,26 +201,30 @@ fn setup(
     let mut meshes = world.resource_mut::<Assets<Mesh>>();
     let (mesh, ring) = (meshes.add(footprint_mesh()), meshes.add(ring_mesh()));
     let mut materials = world.resource_mut::<Assets<StepMaterial>>();
-    let materials = (1..=LEVELS)
-        .map(|k| {
-            materials.add(StepMaterial {
-                base: glow_base(),
-                extension: Ember {
-                    tint: gold(k),
-                    mask: image.clone(),
-                },
+    let materials = [false, true].map(|blue| {
+        (1..=LEVELS)
+            .map(|k| {
+                materials.add(StepMaterial {
+                    base: glow_base(),
+                    extension: Ember {
+                        tint: tint(blue, k),
+                        mask: image.clone(),
+                    },
+                })
             })
-        })
-        .collect();
+            .collect()
+    });
     let mut tongue_materials = world.resource_mut::<Assets<TongueMaterial>>();
-    let tongues = (1..=LEVELS)
-        .map(|k| {
-            tongue_materials.add(TongueMaterial {
-                base: glow_base(),
-                extension: Tongues { tint: gold(k) },
+    let tongues = [false, true].map(|blue| {
+        (1..=LEVELS)
+            .map(|k| {
+                tongue_materials.add(TongueMaterial {
+                    base: glow_base(),
+                    extension: Tongues { tint: tint(blue, k) },
+                })
             })
-        })
-        .collect();
+            .collect()
+    });
     world.insert_resource(StepLook {
         mesh,
         ring,
@@ -393,16 +404,16 @@ fn plan(
     let roads = planner.roads[town].get_or_insert_with(|| Roads::of(&TOWNS[town], ground));
     let ways = roads.search(start);
     let mut steps = Vec::new();
-    for end in &ends {
+    for &(end, blue) in &ends {
         let way = roads.way(&ways, start, [end[0], end[1]]);
-        lay(&way, ground, &mut steps);
+        lay(&way, blue, ground, &mut steps);
     }
     walkers.0.push(Walker { born: now, steps });
 }
 
-/// Steps along `way`, left foot first, skipping any already laid there by an earlier way (two
-/// givers' ways share the road until they part).
-fn lay(way: &[[f32; 2]], ground: &mut Ground, steps: &mut Vec<Step>) {
+/// Steps along `way`, left foot first, `blue` for the trainer's, skipping any of its colour
+/// already laid there by an earlier way (two givers' ways share the road until they part).
+fn lay(way: &[[f32; 2]], blue: bool, ground: &mut Ground, steps: &mut Vec<Step>) {
     let total: f32 = way.windows(2).map(|s| dist(s[0], s[1])).sum();
     let first = steps.len();
     let mut seg = 0;
@@ -429,7 +440,9 @@ fn lay(way: &[[f32; 2]], ground: &mut Ground, steps: &mut Vec<Step>) {
             a[1] + (b[1] - a[1]) * t + dir[0] * side,
         ];
         k += 1;
-        let laid = steps[..first].iter().any(|s| dist(s.spot, p) < STRIDE * 0.5);
+        let laid = steps[..first]
+            .iter()
+            .any(|s| s.blue == blue && dist(s.spot, p) < STRIDE * 0.5);
         if laid {
             continue;
         }
@@ -441,6 +454,7 @@ fn lay(way: &[[f32; 2]], ground: &mut Ground, steps: &mut Vec<Step>) {
             spot: p,
             along,
             edge: (along - CLEAR_START).min(total - CLEAR_END - along),
+            blue,
             ..step
         });
     }
@@ -469,6 +483,7 @@ fn place(p: [f32; 2], dir: [f32; 2], ground: &mut Ground) -> Option<Step> {
         along: 0.0,
         edge: 0.0,
         eaten: None,
+        blue: false,
     })
 }
 
@@ -508,14 +523,14 @@ fn draw(
             .spawn((
                 Footprint,
                 Mesh3d(look.mesh.clone()),
-                MeshMaterial3d(look.materials[0].clone()),
+                MeshMaterial3d(look.materials[0][0].clone()),
                 Transform::default(),
                 Visibility::Hidden,
             ))
             .with_child((
                 Ring,
                 Mesh3d(look.ring.clone()),
-                MeshMaterial3d(look.tongues[0].clone()),
+                MeshMaterial3d(look.tongues[0][0].clone()),
                 Transform::default(),
             ));
     }
@@ -525,13 +540,14 @@ fn draw(
             continue;
         };
         let level = ((strength * LEVELS as f32).ceil() as usize).clamp(1, LEVELS) - 1;
-        if material.0 != look.materials[level] {
-            material.0 = look.materials[level].clone();
+        let c = usize::from(s.blue);
+        if material.0 != look.materials[c][level] {
+            material.0 = look.materials[c][level].clone();
         }
         for &child in children {
             if let Ok(mut ring) = rings.get_mut(child) {
-                if ring.0 != look.tongues[level] {
-                    ring.0 = look.tongues[level].clone();
+                if ring.0 != look.tongues[c][level] {
+                    ring.0 = look.tongues[c][level].clone();
                 }
             }
         }

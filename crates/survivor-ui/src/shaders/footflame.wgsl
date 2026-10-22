@@ -61,7 +61,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     heat = heat * strong * tint.a * 1.7;
 
     let cool = tint.rgb * 0.4;
-    let hot = mix(tint.rgb, vec3<f32>(1.0), 0.45);
+    // A warm tint (gold) pales toward white at its hottest; a cool one (the trainer's blue) keeps
+    // its colour, else it bleaches white.
+    let pale = select(0.08, 0.45, tint.r > tint.b);
+    let hot = mix(tint.rgb, vec3<f32>(1.0), pale);
     let colour = mix(cool, hot, clamp(heat * 0.9, 0.0, 1.0)) * heat;
     return vec4<f32>(colour, 0.0);
 }

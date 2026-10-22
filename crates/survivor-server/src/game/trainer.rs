@@ -59,6 +59,26 @@ impl Game {
         out
     }
 
+    /// The class trainer of town `town`, when it has something new for the player: a rank not
+    /// yet bought, of a level the camp level has reached, that the purse can pay for.
+    pub(super) fn trainer_trail(&self, town: usize, now: Instant) -> Option<[f32; 3]> {
+        let level = self.meta.level;
+        let new = self.trainer_chains().iter().any(|(first, ranks)| {
+            let bought = self.owned.get(first).copied().unwrap_or(0) as usize;
+            ranks
+                .get(bought)
+                .is_some_and(|&(_, l)| l <= level && price(l) <= self.money)
+        });
+        if !new {
+            return None;
+        }
+        self.npcs
+            .iter()
+            .filter(|n| TRAINERS.iter().any(|&(c, e)| c == self.player.class && e == n.entry))
+            .map(|n| n.here(now))
+            .find(|&p| crate::town::town_at(p) == Some(town))
+    }
+
     /// The class trainer the player stands by in town, if any: its name.
     fn trainer_near(&self, now: Instant, range: f32) -> Option<String> {
         let me = self.player.pos;
