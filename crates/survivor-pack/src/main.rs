@@ -281,15 +281,16 @@ fn main() -> Result<()> {
     // `--creatures <creatures.tsv>` adds every model (and its sound folder) the server spawns.
     let mut logs: Vec<PathBuf> = Vec::new();
     let mut creatures_tsv: Option<PathBuf> = None;
-    // `--gameobjects <chests.tsv>`: the models of the objects the server places (column 4).
-    let mut objects_tsv: Option<PathBuf> = None;
+    // `--gameobjects <chests.tsv>`: the models of the objects the server places (column 4); once
+    // per table (chests, gathers).
+    let mut objects_tsv: Vec<PathBuf> = Vec::new();
     // `--items <items.tsv>`: the worn and held looks of the items the server deals (column 5).
     let mut items_tsv: Option<PathBuf> = None;
     while let Some(a) = args.next() {
         if a == "--creatures" {
             creatures_tsv = args.next().map(PathBuf::from);
         } else if a == "--gameobjects" {
-            objects_tsv = args.next().map(PathBuf::from);
+            objects_tsv.extend(args.next().map(PathBuf::from));
         } else if a == "--items" {
             items_tsv = args.next().map(PathBuf::from);
         } else {
@@ -354,7 +355,7 @@ fn main() -> Result<()> {
             p.keep(&path);
         }
     }
-    if let Some(tsv) = &objects_tsv {
+    for tsv in &objects_tsv {
         let text = std::fs::read_to_string(tsv).with_context(|| tsv.display().to_string())?;
         let displays: std::collections::BTreeSet<u32> = text
             .lines()
