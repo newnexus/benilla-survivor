@@ -17,6 +17,7 @@ mod aura;
 mod chest;
 mod gather;
 mod gear;
+mod hearth;
 mod meal;
 mod orbs;
 mod pick;
@@ -284,6 +285,8 @@ pub(crate) struct Game {
     pick: Option<pick::Pick>,
     /// When a level-up's cards are due, the world playing on until then.
     pick_due: Option<Instant>,
+    /// The Hearthstone charging, on a run.
+    hearth: Option<hearth::Hearth>,
     /// The root and unroot counter the client's acks echo.
     root_counter: u32,
     /// What the player carries and wears.
@@ -480,6 +483,7 @@ impl Game {
             picks_pending: 0,
             pick: None,
             pick_due: None,
+            hearth: None,
             root_counter: 0,
             pack,
             meals: Vec::new(),
@@ -659,6 +663,7 @@ impl Game {
         self.player_attack(now);
         self.tick_spells(now);
         self.tick_meals(now);
+        self.tick_hearth(now);
         self.tick_buffs(now);
         for i in 0..self.mobs.len() {
             self.mob_ai(i, now);

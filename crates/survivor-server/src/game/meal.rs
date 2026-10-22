@@ -64,6 +64,10 @@ impl Game {
         let Some(i) = self.pack.iter().position(|p| p.field == field) else {
             return;
         };
+        if self.pack[i].entry == super::hearth::HEARTHSTONE {
+            self.use_hearthstone(Instant::now());
+            return;
+        }
         let spell_id = self.data.items.get(&self.pack[i].entry).map_or(0, |t| t.spell);
         let Some(s) = self.spell(spell_id).cloned() else { return };
         let Some(e) = (0..3).find(|&e| {

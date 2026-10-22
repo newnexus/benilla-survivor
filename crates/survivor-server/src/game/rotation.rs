@@ -9,7 +9,7 @@
 //! - The main bar's end holds the buffs and heals: a buff is cast while it is not up, a heal when
 //!   health runs low.
 //! - The right-hand vertical bar (1.12's MultiBarRight, buttons 25-36) holds the rest: food,
-//!   drink, the racial and the Attack toggle.
+//!   drink, the Hearthstone, the racial and the Attack toggle.
 
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,8 @@ use crate::packets;
 const MAIN_BAR: usize = 12;
 /// MultiBarRight's first button (1.12's action 25).
 const RIGHT_BAR: usize = 24;
+/// An action button's kind for an item (1.12's `ACTION_BUTTON_ITEM`).
+const ITEM_BUTTON: u32 = 0x80;
 /// A damage spell's own cooldown, on top of its cast time, when its 1.12 one is shorter.
 const QUEUE_COOLDOWN_MS: u32 = 2000;
 /// A heal goes off below this share of health, a heal over time below the second.
@@ -56,6 +58,11 @@ impl Game {
                 (0, Some(SpellKind::Defensive)) => bars.keep_up.push(action),
                 _ => bars.extras.push(w),
             }
+        }
+        // The Hearthstone with the food and drink: a way home from a run.
+        let hearth = super::hearth::HEARTHSTONE | ITEM_BUTTON << 24;
+        if !bars.extras.contains(&hearth) {
+            bars.extras.push(hearth);
         }
         self.bars = bars;
         // `$SURVIVOR_EXTRA_SPELLS=116,122,...`: known from the start, for trying a rotation

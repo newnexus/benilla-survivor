@@ -426,6 +426,8 @@ impl Game {
             *t += by;
         }
         p.gcd_until += by;
+        self.shift_hearth(by);
+        let p = &mut self.player;
         p.in_combat_until += by;
         p.next_swing += by;
         if let Some(t) = &mut p.dead_until {

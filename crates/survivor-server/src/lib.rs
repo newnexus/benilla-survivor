@@ -108,6 +108,21 @@ pub mod menu_pause {
     }
 }
 
+/// The Hearthstone's charge for the screen: how far along, 0 to 1, while it charges.
+pub mod hearth {
+    use std::sync::Mutex;
+
+    static CHARGE: Mutex<Option<f32>> = Mutex::new(None);
+
+    pub fn charge() -> Option<f32> {
+        *CHARGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn set(part: Option<f32>) {
+        *CHARGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = part;
+    }
+}
+
 /// The player's purse, copper, for the screen's corner.
 pub mod purse {
     use std::sync::atomic::{AtomicU32, Ordering};

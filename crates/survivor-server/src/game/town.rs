@@ -375,6 +375,15 @@ impl Game {
 
     /// A dead run ends in the nearest town, standing.
     pub(super) fn carry_to_town(&mut self, now: Instant) {
+        self.take_to_town(true, now);
+    }
+
+    /// The Hearthstone: the nearest town, alive, the run ended as if walked in.
+    pub(super) fn go_home(&mut self, now: Instant) {
+        self.take_to_town(false, now);
+    }
+
+    fn take_to_town(&mut self, died: bool, now: Instant) {
         let i = nearest(self.player.pos);
         let t = &TOWNS[i];
         self.teleport_counter += 1;
@@ -386,7 +395,7 @@ impl Game {
         self.player.pos = t.arrive;
         self.player.facing = t.arrive_facing;
         if self.in_run() {
-            self.enter_town(i, true, now);
+            self.enter_town(i, died, now);
         } else {
             self.player.health = self.player.max_health;
             let mut fl = Fields::default();
