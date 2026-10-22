@@ -74,6 +74,22 @@ impl Healer {
         Self::costs(u).get(self.level(u) as usize).copied()
     }
 
+    /// The souls `u`'s last level cost, given back when it is taken off.
+    fn refund(&self, u: Upgrade) -> Option<u32> {
+        let level = self.level(u) as usize;
+        (level > 0).then(|| Self::costs(u).get(level - 1).copied()).flatten()
+    }
+
+    fn lower(&mut self, u: Upgrade) {
+        match u {
+            Upgrade::Reroll => self.rerolls = self.rerolls.saturating_sub(1),
+            Upgrade::Banish => self.banishes = self.banishes.saturating_sub(1),
+            Upgrade::RuneRate => self.rune_rate = self.rune_rate.saturating_sub(1),
+            Upgrade::Gcd => self.gcd = self.gcd.saturating_sub(1),
+            Upgrade::Rune(k) => self.runes[usize::from(k)] = false,
+        }
+    }
+
     fn raise(&mut self, u: Upgrade) {
         match u {
             Upgrade::Reroll => self.rerolls += 1,
@@ -157,6 +173,7 @@ impl Game {
             level: h.level(u),
             max: Healer::costs(u).len() as u32,
             cost: h.cost(u),
+            refund: h.refund(u),
             icon,
         };
         let mut rows = vec![
@@ -226,6 +243,16 @@ impl Game {
                 self.healer.raise(u);
                 crate::spirit::souls::set(self.souls);
                 eprintln!("survivor: bought {u:?} for {cost} souls, {} left", self.souls);
+                self.save();
+                self.post_spirit();
+            }
+            // Free to undo: the level's souls come back in full.
+            crate::spirit::Action::Refund(u) => {
+                let Some(back) = self.healer.refund(u) else { return };
+                self.healer.lower(u);
+                self.souls += back;
+                crate::spirit::souls::set(self.souls);
+                eprintln!("survivor: refunded {u:?} for {back} souls, {} now", self.souls);
                 self.save();
                 self.post_spirit();
             }

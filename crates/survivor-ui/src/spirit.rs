@@ -1,5 +1,6 @@
 //! The spirit healer's window ([`survivor_server::spirit`]): the souls to spend at the top, then a
-//! row per upgrade (icon, name, what the next level gives, its level, and a button with its price).
+//! row per upgrade: [-] (a level off, its souls back in full), the icon, name and what the next
+//! level gives, its level, and [+] with the next level's price.
 //! Rebuilt whenever the server posts it again (a purchase), closed with its X.
 
 use bevy::prelude::*;
@@ -155,6 +156,12 @@ fn spawn_window(
                         ..default()
                     })
                     .with_children(|r| {
+                        // [-]: the last level off, its souls back.
+                        let back = row.refund.is_some();
+                        r.spawn(step_button(id, Action::Refund(row.upgrade), back, 5.0))
+                            .with_children(|b| {
+                                b.spawn(text(font, "-", 4.0 * vh, if back { WHITE } else { DIM }));
+                            });
                         let mut icon = r.spawn((
                             Node {
                                 width: Val::Vh(6.0),
@@ -184,35 +191,40 @@ fn spawn_window(
                                 ..default()
                             },
                         ));
+                        // [+]: the next level, for its souls.
                         let (label, can) = match row.cost {
-                            Some(c) => (format!("{c} souls"), w.souls >= c),
-                            None => ("Done".to_owned(), false),
+                            Some(c) => (format!("+  {c} souls"), w.souls >= c),
+                            None => ("Max".to_owned(), false),
                         };
-                        let shade = can.then_some((BUY, BUY_LIT));
-                        r.spawn((
-                            Press(id, Action::Buy(row.upgrade)),
-                            Shade(shade),
-                            Button,
-                            Node {
-                                width: Val::Vh(16.0),
-                                height: Val::Vh(5.0),
-                                flex_shrink: 0.0,
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(1.5)),
-                                border_radius: BorderRadius::all(Val::Vh(0.8)),
-                                ..default()
-                            },
-                            BackgroundColor(if can { BUY } else { BUY_OFF }),
-                            BorderColor::all(PAGE_EDGE),
-                        ))
-                        .with_children(|b| {
-                            b.spawn(text(font, &label, 2.8 * vh, if can { WHITE } else { DIM }));
-                        });
+                        r.spawn(step_button(id, Action::Buy(row.upgrade), can, 16.0))
+                            .with_children(|b| {
+                                b.spawn(text(font, &label, 2.8 * vh, if can { WHITE } else { DIM }));
+                            });
                     });
                 }
             });
         });
+}
+
+/// A row's [-] or [+], `wide` vh wide, lit only when it can be pressed.
+fn step_button(id: u64, action: Action, can: bool, wide: f32) -> impl Bundle {
+    (
+        Press(id, action),
+        Shade(can.then_some((BUY, BUY_LIT))),
+        Button,
+        Node {
+            width: Val::Vh(wide),
+            height: Val::Vh(5.0),
+            flex_shrink: 0.0,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(1.5)),
+            border_radius: BorderRadius::all(Val::Vh(0.8)),
+            ..default()
+        },
+        BackgroundColor(if can { BUY } else { BUY_OFF }),
+        BorderColor::all(PAGE_EDGE),
+    )
 }
 
 fn press_buttons(

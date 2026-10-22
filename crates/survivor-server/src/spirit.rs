@@ -30,6 +30,8 @@ pub struct Row {
     pub max: u32,
     /// Souls for the next level; none at the top.
     pub cost: Option<u32>,
+    /// Souls back for taking the last level off (free refund); none at level 0.
+    pub refund: Option<u32>,
     /// An interface icon (without `.blp`).
     pub icon: &'static str,
 }
@@ -46,6 +48,8 @@ pub struct Window {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Buy(Upgrade),
+    /// Take a level off, its souls back.
+    Refund(Upgrade),
     Close,
 }
 
