@@ -699,12 +699,34 @@ impl Game {
         }
         let dt = now.saturating_duration_since(self.last_tick).as_secs_f32().min(0.5);
         self.last_tick = now;
+        self.publish_big_bars();
         self.tick_runes(now, dt);
         self.tick_orbs(now, dt);
         crate::aim::set(self.player.target);
         crate::town::set_in_town(!self.in_run());
         crate::town::set_gates_open(self.gates_open());
         self.open_pending_pick(now);
+    }
+
+    /// Every elite or boss in view and alive, for the big bars on the screen.
+    fn publish_big_bars(&self) {
+        let mut seen: Vec<usize> = self.visible.iter().copied().collect();
+        seen.sort_unstable();
+        let bars = seen
+            .into_iter()
+            .map(|i| &self.mobs[i])
+            .filter(|m| m.alive() && m.hostile)
+            .filter_map(|m| {
+                let t = self.data.creatures.get(&m.entry)?;
+                (t.rank >= 1).then(|| crate::big_bars::Bar {
+                    guid: m.guid,
+                    name: t.name.clone(),
+                    health: m.health,
+                    max: m.max_health,
+                })
+            })
+            .collect();
+        crate::big_bars::set(bars);
     }
 
     fn revive(&mut self, now: Instant) {

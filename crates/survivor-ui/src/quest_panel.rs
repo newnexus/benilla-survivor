@@ -624,7 +624,7 @@ struct Coin {
 
 /// A text's size in screen heights, set as the window is laid out.
 #[derive(Component)]
-struct VhText(f32);
+pub(crate) struct VhText(pub(crate) f32);
 
 /// The giver's face, once the client has baked it.
 fn show_portrait(

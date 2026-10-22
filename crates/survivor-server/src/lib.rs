@@ -151,6 +151,32 @@ pub mod pickup {
     }
 }
 
+/// The elites and bosses in view, for the big bars along the screen's bottom: name, health,
+/// most first (the newest last).
+pub mod big_bars {
+    use std::sync::Mutex;
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Bar {
+        pub guid: u64,
+        pub name: String,
+        pub health: u32,
+        pub max: u32,
+    }
+
+    static BARS: Mutex<Vec<Bar>> = Mutex::new(Vec::new());
+
+    pub fn current() -> Vec<Bar> {
+        BARS.lock().map(|b| b.clone()).unwrap_or_default()
+    }
+
+    pub(crate) fn set(bars: Vec<Bar>) {
+        if let Ok(mut b) = BARS.lock() {
+            *b = bars;
+        }
+    }
+}
+
 /// The player's purse, copper, for the screen's corner.
 pub mod purse {
     use std::sync::atomic::{AtomicU32, Ordering};
