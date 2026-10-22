@@ -21,6 +21,17 @@ pub const BOSSES: &[(u32, f32)] = &[
     (3976, 1.8),  // Scarlet Commander Mograine, the Scarlet Monastery's knight
 ];
 
+/// Each boss's heralds, by the boss's place in [`BOSSES`]: in the last [`HERALD_LEAD`] seconds
+/// before it comes, a part of the wave ([`HERALD_SHARE`]) is these instead. Bats before the
+/// Duskbat.
+pub const HERALDS: &[&[u32]] = &[
+    &[1512, 1513, 1553], // Duskbat, Mangy Duskbat, Greater Duskbat
+    &[],
+    &[],
+];
+pub const HERALD_LEAD: f32 = 60.0;
+pub const HERALD_SHARE: f32 = 0.4;
+
 /// A marked area of the map: while the player is in it, the spawner sends its kinds instead of
 /// the zone's waves, and stepping in says `entered`.
 pub struct Area {
@@ -83,5 +94,6 @@ pub fn all_kinds() -> impl Iterator<Item = u32> {
         .iter()
         .copied()
         .chain(BOSSES.iter().map(|b| b.0))
+        .chain(HERALDS.iter().flat_map(|h| h.iter().copied()))
         .chain(AREAS.iter().flat_map(|a| a.kinds.iter().copied()))
 }

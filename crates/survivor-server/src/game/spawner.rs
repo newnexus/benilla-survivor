@@ -14,7 +14,7 @@ use benilla_protocol::messages::opcode;
 
 use super::{dist2d, Game, Mob, MobState, Path};
 use crate::packets;
-use crate::waves::{area_at, AREAS, BOSSES, KINDS};
+use crate::waves::{area_at, AREAS, BOSSES, HERALDS, HERALD_LEAD, HERALD_SHARE, KINDS};
 
 /// A spawn lands this far from the player, yards.
 const SPAWN_NEAR: f32 = 25.0;
@@ -133,10 +133,22 @@ impl Game {
         if now >= w.next_spawn && alive < cap {
             let wait = (INTERVAL.0 - INTERVAL.1 * minutes).max(INTERVAL.2);
             w.next_spawn = now + Duration::from_secs_f32(wait);
+            let boss_in = w.next_boss.saturating_duration_since(now).as_secs_f32() * w.pace;
+            let heralds: &[u32] = if boss_in <= HERALD_LEAD {
+                HERALDS.get(w.bosses % BOSSES.len()).copied().unwrap_or(&[])
+            } else {
+                &[]
+            };
             let entry = match area {
                 Some(a) => {
                     let kinds = AREAS[a].kinds;
                     kinds[(self.rng.next() % kinds.len() as u64) as usize]
+                }
+                // The coming boss's heralds, in its last minute.
+                None if !heralds.is_empty() && self.rng.unit() < HERALD_SHARE => {
+                    let e = heralds[(self.rng.next() % heralds.len() as u64) as usize];
+                    eprintln!("survivor: a herald of the boss, {e}");
+                    e
                 }
                 // Now and then one of the kind before, so the waves blend.
                 None if w.kind > 0 && self.rng.unit() < 0.3 => KINDS[w.kind - 1],
