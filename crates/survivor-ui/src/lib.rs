@@ -86,10 +86,10 @@ const SCREEN_Z: i32 = 950;
 /// The survivor's big windows (the level-up cards, the quest window) are drawn this much
 /// smaller on a computer's screen than on a phone's.
 const SHRINK: f32 = if cfg!(target_os = "android") { 1.0 } else { 0.72 };
-/// The purse's top edge and its right edge's distance from the screen's, in screen heights: left
-/// of the minimap, under the buffs' row; the minimap is bigger on a phone.
-const PURSE_TOP: f32 = if cfg!(target_os = "android") { 12.0 } else { 8.5 };
-const PURSE_RIGHT: f32 = if cfg!(target_os = "android") { 30.0 } else { 21.5 };
+/// The purse's top edge and its right edge's distance from the screen's, in screen heights:
+/// under the minimap, which is bigger on a phone.
+const PURSE_TOP: f32 = if cfg!(target_os = "android") { 27.0 } else { 20.0 };
+const PURSE_RIGHT: f32 = if cfg!(target_os = "android") { 8.0 } else { 6.5 };
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
 const CARD_BG: Color = Color::srgba(0.07, 0.06, 0.05, 0.96);
 const CARD_BG_HOVER: Color = Color::srgba(0.16, 0.13, 0.08, 0.98);

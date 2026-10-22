@@ -199,6 +199,8 @@ struct PurseAmount(usize);
 /// coins, a part shown only when it has something (copper always).
 /// The purse's souls line (in town only), after the coins' amounts (0-2) and icons (3-5).
 const SOULS: usize = 6;
+/// The purse's text and coins, this much bigger than the screen's small print.
+const PURSE_SCALE: f32 = 1.4;
 
 fn show_purse(
     mut commands: Commands,
@@ -233,7 +235,7 @@ fn show_purse(
                 Purse,
                 Node {
                     position_type: PositionType::Absolute,
-                    // Left of the minimap, under the buffs' row.
+                    // Under the minimap.
                     right: Val::Vh(crate::PURSE_RIGHT),
                     top: Val::Vh(crate::PURSE_TOP),
                     flex_direction: FlexDirection::Row,
@@ -254,7 +256,7 @@ fn show_purse(
                         Text::new(""),
                         TextFont {
                             font: font.clone(),
-                            font_size: 2.6 * vh,
+                            font_size: 2.6 * PURSE_SCALE * vh,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -270,8 +272,8 @@ fn show_purse(
                             ..default()
                         },
                         Node {
-                            width: Val::Vh(2.2),
-                            height: Val::Vh(2.2),
+                            width: Val::Vh(2.2 * PURSE_SCALE),
+                            height: Val::Vh(2.2 * PURSE_SCALE),
                             ..default()
                         },
                     ));
@@ -282,7 +284,7 @@ fn show_purse(
                     Text::new(""),
                     TextFont {
                         font: font.clone(),
-                        font_size: 2.6 * vh,
+                        font_size: 2.6 * PURSE_SCALE * vh,
                         ..default()
                     },
                     TextColor(SOUL_BLUE),
