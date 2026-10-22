@@ -337,13 +337,14 @@ impl Game {
         // The worn gear's health on top.
         self.apply_gear();
     }
-
+    /// The level gates open to the player, a bit each: their camp (meta) level has reached the
+    /// gate's, whatever level the run is at.
     /// The level gates open to the player, a bit each: a run that has reached their level.
     pub(super) fn gates_open(&self) -> u32 {
         crate::town::GATES
             .iter()
             .enumerate()
-            .filter(|(_, g)| self.in_run() && self.player.level >= g.level)
+            .filter(|(_, g)| self.meta.level >= g.level)
             .fold(0, |m, (i, _)| m | 1 << i)
     }
 
@@ -373,7 +374,7 @@ impl Game {
         self.player.pos = back;
         if self.gate_said.is_none_or(|t| now.saturating_duration_since(t) > GATE_SAY_EVERY) {
             self.gate_said = Some(now);
-            let line = format!("Reach level {} to leave {}", g.level, g.name);
+            let line = format!("Reach camp level {} to leave {}", g.level, g.name);
             self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
         }
         true

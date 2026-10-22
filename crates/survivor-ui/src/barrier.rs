@@ -263,7 +263,7 @@ fn place_labels(
         for (i, gate) in GATES.iter().enumerate() {
             commands.spawn((
                 GateLabel(i),
-                Text::new(format!("Level {} required", gate.level)),
+                Text::new(format!("Camp level {} required", gate.level)),
                 TextFont {
                     font: font.clone(),
                     font_size: 24.0,
