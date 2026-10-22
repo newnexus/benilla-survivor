@@ -195,6 +195,8 @@ impl Game {
                     self.soul_found();
                 }
                 Kind::Coin => self.add_money(amount),
+                // Runes never fly to the player: they are walked over ([`super::runes`]).
+                Kind::Rune(_) => {}
             }
         }
         let lying = self
@@ -217,6 +219,7 @@ impl Game {
                     amount: o.amount,
                 })
                 .chain(lying)
+                .chain(self.rune_orbs())
                 .collect(),
         );
     }

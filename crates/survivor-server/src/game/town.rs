@@ -255,6 +255,7 @@ impl Game {
         self.clear_spawned(now);
         self.end_orbs(died);
         self.end_souls(died);
+        self.end_runes();
         // Back alive, a part of all the copper the run picked up joins the town purse.
         let brought = if died { 0 } else { self.run_found * BROUGHT_HOME_PERCENT / 100 };
         let found = self.run_found;

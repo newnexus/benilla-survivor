@@ -16,6 +16,15 @@ const COIN_THICK: f32 = 0.025;
 /// A 5 and a 25 coin are this much larger than a single one.
 const COIN_SIZES: [f32; 3] = [1.0, 1.3, 1.65];
 const SOUL_BLUE: Color = Color::srgb(0.45, 0.85, 1.0);
+/// A rune's core and glow radii, yards, and each kind's colour: power, haste, focus, mending.
+const RUNE: f32 = 0.22;
+const RUNE_GLOW: f32 = 0.55;
+const RUNE_COLORS: [Color; 4] = [
+    Color::srgb(1.0, 0.3, 0.15),
+    Color::srgb(1.0, 0.9, 0.3),
+    Color::srgb(0.75, 0.4, 1.0),
+    Color::srgb(0.3, 1.0, 0.45),
+];
 /// Copper, silver and gold, with how much each glows.
 const METALS: [(Color, [f32; 3]); 3] = [
     (Color::srgb(0.72, 0.42, 0.2), [0.3, 0.13, 0.04]),
@@ -38,6 +47,10 @@ struct Looks {
     coins: [Handle<Mesh>; 3],
     /// Copper, silver and gold.
     metals: [Handle<StandardMaterial>; 3],
+    rune: Handle<Mesh>,
+    rune_glow: Handle<Mesh>,
+    /// Each kind's core and glow.
+    runes: [(Handle<StandardMaterial>, Handle<StandardMaterial>); 4],
 }
 
 #[derive(Component)]
@@ -66,6 +79,9 @@ fn make_looks(
         soul_mat: materials.add(glow(SOUL_BLUE, 1.0)),
         glow_mat: materials.add(glow(SOUL_BLUE, 0.35)),
         coins: COIN_SIZES.map(|k| meshes.add(Cylinder::new(COIN * k, COIN_THICK * k))),
+        rune: meshes.add(Sphere::new(RUNE).mesh().uv(20, 14)),
+        rune_glow: meshes.add(Sphere::new(RUNE_GLOW).mesh().uv(20, 14)),
+        runes: RUNE_COLORS.map(|c| (materials.add(glow(c, 1.0)), materials.add(glow(c, 0.3)))),
         metals: METALS.map(|(color, [r, g, b])| {
             materials.add(StandardMaterial {
                 base_color: color,
@@ -124,6 +140,13 @@ fn sync_orbs(
                     ));
                 });
             }
+            Kind::Rune(k) => {
+                let (core, halo) = looks.runes[usize::from(k).min(3)].clone();
+                e.insert((Mesh3d(looks.rune.clone()), MeshMaterial3d(core)));
+                e.with_children(|c| {
+                    c.spawn((Mesh3d(looks.rune_glow.clone()), MeshMaterial3d(halo), Transform::default()));
+                });
+            }
             Kind::Coin => {
                 // Copper below 100, silver below 10,000; then single, 5 or 25 of that metal.
                 let metal = match o.amount {
@@ -159,6 +182,9 @@ fn move_orbs(time: Res<Time>, mut drawn: Query<(&Drawn, &mut Transform)>) {
         match d.kind {
             Kind::Soul => {
                 tf.scale = Vec3::splat(1.0 + 0.15 * (t * 5.0 + d.seed).sin());
+            }
+            Kind::Rune(_) => {
+                tf.scale = Vec3::splat(1.0 + 0.25 * (t * 3.0 + d.seed).sin());
             }
             Kind::Coin => {
                 // On edge, turning about the up axis.

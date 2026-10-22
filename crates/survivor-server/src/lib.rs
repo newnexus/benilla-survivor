@@ -63,6 +63,8 @@ pub mod orbs {
         Soul,
         /// Its gold: one coin per piece of copper, silver or gold, single or worth 5 or 25.
         Coin,
+        /// A rune on a run, by kind: power, haste, focus, mending.
+        Rune(u8),
     }
 
     #[derive(Clone, Copy, Debug, PartialEq)]

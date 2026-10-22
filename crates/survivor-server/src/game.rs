@@ -23,6 +23,7 @@ mod orbs;
 mod pick;
 mod quest;
 mod rotation;
+mod runes;
 mod save;
 mod spawner;
 mod spirit;
@@ -373,6 +374,8 @@ pub(crate) struct Game {
     rerolls_left: u32,
     banishes_left: u32,
     banished: std::collections::HashSet<u32>,
+    /// Runes lying about a run, and their powers on the player.
+    runes: runes::Runes,
     armory_shown: HashSet<usize>,
     /// The starting gear per equipment slot (its entry and item guid), and its weapon: what a
     /// run ends back in.
@@ -554,6 +557,7 @@ impl Game {
             rerolls_left: 0,
             banishes_left: 0,
             banished: std::collections::HashSet::new(),
+            runes: runes::Runes::default(),
             armory_shown: HashSet::new(),
             start_visible,
             worn_items: std::collections::HashMap::new(),
@@ -695,6 +699,7 @@ impl Game {
         }
         let dt = now.saturating_duration_since(self.last_tick).as_secs_f32().min(0.5);
         self.last_tick = now;
+        self.tick_runes(now, dt);
         self.tick_orbs(now, dt);
         crate::aim::set(self.player.target);
         crate::town::set_in_town(!self.in_run());

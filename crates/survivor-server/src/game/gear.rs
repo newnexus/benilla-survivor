@@ -452,7 +452,8 @@ impl Game {
             .flat_map(GearItem::stat_values)
             .filter(|&(s, _)| s == stat)
             .map(|(_, x)| x)
-            .sum()
+            .sum::<f32>()
+            + self.rune_bonus(stat)
     }
 
     /// What the gear changes on the character itself: health and run speed.
