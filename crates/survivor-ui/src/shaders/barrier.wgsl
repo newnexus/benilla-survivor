@@ -3,6 +3,8 @@
 // material's `AlphaMode::Add`), so the world shows through.
 //
 // uv.x runs around the wall (one unit per few yards), uv.y from the foot (0) to the top (1).
+// The tint's alpha is how many times finer the flame's pattern runs up the wall than a town
+// barrier's: a taller wall with narrower tongues keeps their shape instead of stretching them.
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::{globals, view}
@@ -41,10 +43,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let t = globals.time;
     let u = in.uv.x;
     let v = clamp(in.uv.y, 0.0, 1.0);
+    // The pattern's height, in the same units as a town barrier's.
+    let p = v * max(tint.a, 1.0);
 
     // A slow warp first, then the flame read through it: the tongues sway and bend as they rise.
-    let warp = fbm(vec2<f32>(u * 0.9, v * 1.5 - t * 0.35)) - 0.5;
-    let rise = fbm(vec2<f32>(u * 2.2 + warp * 1.6, v * 3.0 - t * 0.9));
+    let warp = fbm(vec2<f32>(u * 0.9, p * 1.5 - t * 0.35)) - 0.5;
+    let rise = fbm(vec2<f32>(u * 2.2 + warp * 1.6, p * 3.0 - t * 0.9));
 
     // The flame's edge: high where the noise is high, so tongues reach up unevenly.
     let reach = 0.1 + 0.9 * rise * rise;
@@ -52,7 +56,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Stronger at the foot, fading as it rises.
     let fade = pow(1.0 - v, 1.6);
     // Flicker: fine noise racing upward.
-    let flicker = 0.7 + 0.6 * fbm(vec2<f32>(u * 6.0, v * 8.0 - t * 2.4));
+    let flicker = 0.7 + 0.6 * fbm(vec2<f32>(u * 6.0, p * 8.0 - t * 2.4));
     var heat = body * fade * flicker * 0.6;
     // The seam where the wall meets the ground burns brightest.
     heat = heat + 0.7 * (1.0 - smoothstep(0.0, 0.06, v)) * (0.8 + 0.2 * sin(t * 2.0 + u * 3.0));

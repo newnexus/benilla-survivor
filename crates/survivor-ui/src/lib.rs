@@ -138,6 +138,15 @@ struct Screen {
     broken: bool,
 }
 
+impl Screen {
+    /// The game font, once the library has loaded.
+    fn font(&self) -> Option<Handle<Font>> {
+        let library = self.library.as_ref()?;
+        let library = library.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Some(library.font.clone())
+    }
+}
+
 /// The cards on screen, in order, for the keys and the clicks.
 #[derive(Component)]
 struct CardButton {

@@ -2,7 +2,8 @@
 //! each, strongest where it meets the ground and fading as it rises, its tongues warping slowly
 //! (`shaders/barrier.wgsl`). It glows (additive) rather than tints, so the world behind it stays
 //! clear. Shown while the player is in the world. The level gates
-//! ([`survivor_server::town::GATES`]) are the same flame in blue, shown while closed.
+//! ([`survivor_server::town::GATES`]) are the same flame in blue, taller and denser, shown while
+//! closed, with the level they ask for written over them.
 //!
 //! World coordinates are absolute in benilla (no floating origin), so each wall is placed once,
 //! through the client's own WoW-to-Bevy transform. Its foot follows the terrain: the ground
@@ -28,6 +29,18 @@ const SINK: f32 = 1.5;
 const RINGS: usize = 6;
 /// The flame's pattern repeats every this many yards around the wall.
 const FLAME_WIDTH: f32 = 4.0;
+/// A level gate's wall: its height, and its flame's width, a quarter of a town's: four times the
+/// tongues.
+const GATE_TOP: f32 = 36.0;
+const GATE_FLAME_WIDTH: f32 = 1.0;
+/// A gate's level is written on its wall this far over the player's feet, where the wall is
+/// nearest them, readable out to this many yards, at this part of the screen's height. The camera
+/// looks down, so a wall far off would put it over the screen's top: it stays at least this far
+/// down the screen, under the run clock.
+const LABEL_OVER: f32 = 2.0;
+const LABEL_TOP: f32 = 0.15;
+const LABEL_RANGE: f32 = 150.0;
+const LABEL_SIZE: f32 = 0.045;
 
 /// The flame: a fragment stage of our own over the stock mesh pipeline.
 pub(crate) type FlameMaterial = ExtendedMaterial<StandardMaterial, Flame>;
@@ -70,7 +83,7 @@ pub(crate) fn plugin(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/barrier.wgsl");
     app.add_plugins(MaterialPlugin::<FlameMaterial>::default())
         .add_systems(Startup, spawn_walls)
-        .add_systems(Update, show_in_world);
+        .add_systems(Update, (show_in_world, place_labels).chain());
 }
 
 #[derive(Component)]
@@ -79,6 +92,10 @@ struct Barrier;
 /// A level gate's wall, by its place in [`GATES`].
 #[derive(Component)]
 struct GateWall(usize);
+
+/// The writing over a level gate's wall: its level, by the gate's place in [`GATES`].
+#[derive(Component)]
+struct GateLabel(usize);
 
 fn spawn_walls(
     mut commands: Commands,
@@ -94,13 +111,24 @@ fn spawn_walls(
         commands.spawn((
             Barrier,
             Name::new(format!("survivor barrier: {}", town.name)),
-            Mesh3d(meshes.add(wall(&round, town.centre, town.ground, &mut ground))),
+            Mesh3d(meshes.add(wall(
+                &round,
+                town.centre,
+                town.ground,
+                TOP,
+                FLAME_WIDTH,
+                &mut ground,
+            ))),
             MeshMaterial3d(material.clone()),
             Transform::from_translation(at),
             Visibility::Hidden,
         ));
     }
-    let blue = materials.add(flame(BLUE));
+    // Taller and with narrower tongues than a town's: the pattern runs finer up the wall by both,
+    // so the tongues keep a town barrier's shape (the shader reads it from the tint's alpha).
+    let mut gate_flame = flame(BLUE);
+    gate_flame.extension.tint.alpha = (GATE_TOP / TOP) * (FLAME_WIDTH / GATE_FLAME_WIDTH);
+    let blue = materials.add(gate_flame);
     for (i, gate) in GATES.iter().enumerate() {
         let [a, b] = gate.ends;
         let mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
@@ -109,7 +137,14 @@ fn spawn_walls(
             Barrier,
             GateWall(i),
             Name::new(format!("survivor level gate: {}", gate.name)),
-            Mesh3d(meshes.add(wall(&gate.ends, mid, gate.ground, &mut ground))),
+            Mesh3d(meshes.add(wall(
+                &gate.ends,
+                mid,
+                gate.ground,
+                GATE_TOP,
+                GATE_FLAME_WIDTH,
+                &mut ground,
+            ))),
             MeshMaterial3d(blue.clone()),
             Transform::from_translation(at),
             Visibility::Hidden,
@@ -119,8 +154,16 @@ fn spawn_walls(
 
 /// A wall along `line` (a town's outline closed round, or a gate's two ends), standing on the
 /// ground under each point, placed from `centre`; `fallback` is the ground where the map has
-/// none. Its uv runs along the wall in flame widths, and from the foot (0) to the top (1).
-fn wall(line: &[[f32; 2]], centre: [f32; 2], fallback: f32, ground: &mut Ground) -> Mesh {
+/// none; `top` is its height. Its uv runs along the wall in `flame_width`s, and from the foot (0)
+/// to the top (1).
+fn wall(
+    line: &[[f32; 2]],
+    centre: [f32; 2],
+    fallback: f32,
+    top: f32,
+    flame_width: f32,
+    ground: &mut Ground,
+) -> Mesh {
     // The line walked, a point every [`STEP`] yards.
     let mut path: Vec<([f32; 2], f32)> = Vec::new();
     let mut along = 0.0;
@@ -130,13 +173,16 @@ fn wall(line: &[[f32; 2]], centre: [f32; 2], fallback: f32, ground: &mut Ground)
         let steps = (len / STEP).ceil().max(1.0) as usize;
         for k in 0..steps {
             let t = k as f32 / steps as f32;
-            path.push(([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t], along + len * t));
+            path.push((
+                [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t],
+                along + len * t,
+            ));
         }
         along += len;
     }
     path.push((line[line.len() - 1], along));
     // Flame widths that fit the whole way round evenly.
-    let widths = (along / FLAME_WIDTH).round().max(1.0);
+    let widths = (along / flame_width).round().max(1.0);
     let floor: Vec<f32> = path
         .iter()
         .map(|&([x, y], _)| ground.height(x, y).unwrap_or(fallback))
@@ -146,7 +192,7 @@ fn wall(line: &[[f32; 2]], centre: [f32; 2], fallback: f32, ground: &mut Ground)
     let mut uvs = Vec::new();
     for ring in 0..=RINGS {
         let up = ring as f32 / RINGS as f32;
-        let height = -SINK + up * (TOP + SINK);
+        let height = -SINK + up * (top + SINK);
         for (&([x, y], d), &h) in path.iter().zip(&floor) {
             // Bevy's (x, z) is WoW's (-y, -x), from the centre.
             let (bx, bz) = (-(y - centre[1]), -(x - centre[0]));
@@ -154,7 +200,7 @@ fn wall(line: &[[f32; 2]], centre: [f32; 2], fallback: f32, ground: &mut Ground)
             let out = Vec2::new(bx, bz).normalize_or_zero();
             normals.push([out.x, 0.0, out.y]);
             // The ground line is v = 0: the sunk part repeats the seam.
-            uvs.push([d / along * widths, (height / TOP).max(0.0)]);
+            uvs.push([d / along * widths, (height / top).max(0.0)]);
         }
     }
     let segments = path.len() - 1;
@@ -186,11 +232,92 @@ fn show_in_world(
     let in_world = objects.player().is_some();
     for (mut v, gate) in &mut walls {
         let open = gate.is_some_and(|g| survivor_server::town::gate_open(g.0));
+
         let want = if in_world && !open {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
         v.set_if_neq(want);
+    }
+}
+
+/// Each closed gate's level, written over its wall where the camera sees it, out to
+/// [`LABEL_RANGE`]; made once the game font has loaded.
+#[allow(clippy::too_many_arguments)]
+fn place_labels(
+    mut commands: Commands,
+    screen: Res<crate::Screen>,
+    walls: Query<(&GateWall, &Visibility)>,
+    objects: benilla_app::Objects,
+    transforms: Query<&GlobalTransform>,
+    window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    camera: Query<(&Camera, &GlobalTransform), With<benilla_world::view::WorldCamera>>,
+    mut labels: Query<(&GateLabel, &mut Node, &mut Visibility, &mut TextFont), Without<GateWall>>,
+    mut made: Local<bool>,
+) {
+    if !*made {
+        let Some(font) = screen.font() else {
+                return;
+        };
+        for (i, gate) in GATES.iter().enumerate() {
+            commands.spawn((
+                GateLabel(i),
+                Text::new(format!("Level {} required", gate.level)),
+                TextFont {
+                    font: font.clone(),
+                    font_size: 24.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.85, 1.0)),
+                TextShadow::default(),
+                TextLayout::new_with_justify(Justify::Center),
+                Node {
+                    position_type: PositionType::Absolute,
+                    ..default()
+                },
+                GlobalZIndex(crate::SCREEN_Z - 50),
+                Pickable::IGNORE,
+                Visibility::Hidden,
+            ));
+        }
+        *made = true;
+        return;
+    }
+    let (Ok(window), Ok((camera, eye))) = (window.single(), camera.single()) else {
+        return;
+    };
+    let me = objects
+        .player()
+        .and_then(|p| transforms.get(p).ok())
+        .map(|t| benilla_assets::coords::bevy_to_wow(t.translation()));
+    let size = window.height() * LABEL_SIZE;
+    for (label, mut node, mut vis, mut font) in &mut labels {
+        let shown = walls.iter().any(|(w, v)| w.0 == label.0 && *v != Visibility::Hidden);
+        let at = me.filter(|_| shown).and_then(|me| {
+            // The wall's point nearest the player, a little in from its ends.
+            let [a, b] = GATES[label.0].ends;
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let len2 = (d[0] * d[0] + d[1] * d[1]).max(1e-3);
+            let t = (((me[0] - a[0]) * d[0] + (me[1] - a[1]) * d[1]) / len2).clamp(0.1, 0.9);
+            let p = [a[0] + d[0] * t, a[1] + d[1] * t, me[2] + LABEL_OVER];
+            if (p[0] - me[0]).hypot(p[1] - me[1]) > LABEL_RANGE {
+                return None;
+            }
+            camera.world_to_viewport(eye, benilla_assets::coords::wow_to_bevy(p)).ok()
+        });
+        let Some(at) = at else {
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        if font.font_size != size {
+            font.font_size = size;
+        }
+        // Centred on the point: the text is about eight letters of half its height wide.
+        let width = size * 0.5 * 16.0;
+        node.left = Val::Px(at.x - width / 2.0);
+        node.top = Val::Px((at.y - size / 2.0).max(window.height() * LABEL_TOP));
+        node.width = Val::Px(width);
+        vis.set_if_neq(Visibility::Inherited);
     }
 }
