@@ -136,6 +136,10 @@ pub(crate) fn feed_interact_npc(
             && mail.as_ref().is_none_or(|m| m.mailbox != Some(g))
             && reader.as_ref().is_none_or(|r| r.object() != Some(g))
     });
+    // survivor: a game mode's own window names its talker when no stock window holds one.
+    let guid = guid.or_else(|| {
+        Some(crate::SURVIVOR_TALKER.load(std::sync::atomic::Ordering::Relaxed)).filter(|&g| g != 0)
+    });
     // Field 0 is the entity the booth bakes and the facing chain steers by; field 1 is the guid
     // `crate::ui_unit` names the token by, which holds even when the entity is not streamed.
     // Written only on a change: the unit feed's dirty gate reads `is_changed()` on it.

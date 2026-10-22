@@ -280,6 +280,20 @@ impl PortraitBakes {
     }
 }
 
+/// survivor: hand the `"npc"` slot's live bake to [`crate::SurvivorPortrait`].
+pub(crate) fn feed_survivor_portrait(
+    images: Res<PortraitImages>,
+    mut out: ResMut<crate::SurvivorPortrait>,
+) {
+    let live = match images.0.get("npc") {
+        Some(PortraitSource::Live(h)) => Some(h.clone()),
+        _ => None,
+    };
+    if out.0 != live {
+        out.0 = live;
+    }
+}
+
 /// Unit token to what its portrait region shows: the booth writes it, and the UI extract
 /// ([`crate::ui_script`]) reads it for a `SetPortraitTexture`-bound region.
 #[derive(Resource, Default)]
@@ -625,6 +639,9 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut rate: ResMut<PaneRa
 impl Plugin for PortraitPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PortraitImages>()
+            // survivor: the "npc" bake handed out to a game mode's window.
+            .init_resource::<crate::SurvivorPortrait>()
+            .add_systems(PostUpdate, feed_survivor_portrait)
             .init_resource::<PortraitBakes>()
             .init_resource::<PaneRate>()
             .add_observer(on_cvar)

@@ -25,11 +25,19 @@ const PANEL_Z: i32 = crate::SCREEN_Z - 10;
 const WHEEL_LINE: f32 = 40.0;
 
 pub(crate) fn plugin(app: &mut App) {
-    app.add_systems(Update, (show_panel, press_buttons, light_buttons, scroll_text, block_touch));
+    app.add_systems(Update, (show_panel, show_portrait, press_buttons, light_buttons, scroll_text, block_touch));
 }
 
 #[derive(Component)]
 struct PanelRoot;
+
+/// The speaking giver's portrait on the window, filled once the client has baked it.
+#[derive(Component)]
+struct TalkerPortrait;
+
+/// The portrait's frame: its gold, and its size in screen heights.
+const FRAME_GOLD: Color = Color::srgb(0.85, 0.65, 0.2);
+const PORTRAIT: f32 = 16.0;
 
 /// The story's scrolling area.
 #[derive(Component)]
@@ -92,6 +100,11 @@ fn show_panel(
         .and_then(|p| p.entries.get(selected).map(|e| ((p.id, selected), e)));
     if line.map(|l| l.0) != shown.spoken {
         shown.spoken = line.map(|l| l.0);
+        // The giver is the client's "npc" unit while their window is open: their portrait bakes.
+        benilla_app::SURVIVOR_TALKER.store(
+            panel.as_ref().map_or(0, |p| p.giver),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let bytes = line.and_then(|(_, e)| {
             survivor_server::quest_voice(e.quest, e.kind == PanelKind::Reward)
         });
@@ -193,6 +206,55 @@ fn spawn_panel(
             UiTransform::from_scale(Vec2::splat(crate::SHRINK)),
         ))
         .with_children(|root| {
+            // Who is speaking: their face in a gold frame, their name under it.
+            root.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                align_self: AlignSelf::FlexStart,
+                margin: UiRect::top(Val::Vh(4.0)),
+                row_gap: Val::Vh(1.0),
+                ..default()
+            })
+            .with_children(|col| {
+                col.spawn((
+                    Node {
+                        width: Val::Vh(PORTRAIT),
+                        height: Val::Vh(PORTRAIT),
+                        border: UiRect::all(Val::Vh(0.6)),
+                        border_radius: BorderRadius::all(Val::Percent(50.0)),
+                        padding: UiRect::all(Val::Vh(0.3)),
+                        ..default()
+                    },
+                    BorderColor::all(FRAME_GOLD),
+                    BackgroundColor(Color::srgb(0.05, 0.03, 0.02)),
+                ))
+                .with_children(|frame| {
+                    frame.spawn((
+                        TalkerPortrait,
+                        ImageNode::default(),
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            border_radius: BorderRadius::all(Val::Percent(50.0)),
+                            ..default()
+                        },
+                        Visibility::Hidden,
+                    ));
+                });
+                if !panel.giver_name.is_empty() {
+                    col.spawn((
+                        Sheet,
+                        ImageNode::new(parchment.clone()).with_mode(NodeImageMode::Stretch),
+                        Node {
+                            padding: UiRect::axes(Val::Vh(1.5), Val::Vh(0.6)),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|tag| {
+                        tag.spawn(text(&panel.giver_name, title_font, 3.0, HEADING));
+                    });
+                }
+            });
             // The giver's quests, a tab each, when there is more than one.
             if panel.entries.len() > 1 {
                 root.spawn((
@@ -393,6 +455,26 @@ struct Coin {
 /// A text's size in screen heights, set as the window is laid out.
 #[derive(Component)]
 struct VhText(f32);
+
+/// The giver's face, once the client has baked it.
+fn show_portrait(
+    portrait: Res<benilla_app::SurvivorPortrait>,
+    mut nodes: Query<(&mut ImageNode, &mut Visibility), With<TalkerPortrait>>,
+) {
+    for (mut image, mut vis) in &mut nodes {
+        match &portrait.0 {
+            Some(h) => {
+                if image.image != *h {
+                    image.image = h.clone();
+                }
+                vis.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
+}
 
 fn press_buttons(buttons: Query<(&PanelButton, &Interaction), Changed<Interaction>>) {
     for (b, i) in &buttons {

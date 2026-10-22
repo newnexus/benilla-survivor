@@ -224,7 +224,16 @@ impl Game {
                 })
             })
             .collect();
-        let board_id = quest_board::post(Panel { id: 0, entries });
+        let giver_name = self
+            .npc_entry(guid)
+            .and_then(|e| self.data.creatures.get(&e))
+            .map_or_else(String::new, |t| t.name.clone());
+        let board_id = quest_board::post(Panel {
+            id: 0,
+            giver: guid,
+            giver_name,
+            entries,
+        });
         self.open_panel = Some((board_id, guid));
     }
 

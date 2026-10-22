@@ -231,6 +231,14 @@ pub fn survivor_voice(bytes: Option<Vec<u8>>) {
 
 static SURVIVOR_VOICE: std::sync::Mutex<(u64, Option<Vec<u8>>)> = std::sync::Mutex::new((0, None));
 
+/// survivor: the unit a game mode's own window is talking with (its guid), shown as the `"npc"`
+/// unit while no stock window holds one, so its portrait bakes: [`SurvivorPortrait`].
+pub static SURVIVOR_TALKER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// survivor: the `"npc"` unit's baked portrait, for a game mode's own window to show.
+#[derive(bevy::prelude::Resource, Default)]
+pub struct SurvivorPortrait(pub Option<bevy::prelude::Handle<bevy::prelude::Image>>);
+
 /// survivor: the voice request newer than `seen`, if any: its number and bytes.
 pub(crate) fn take_survivor_voice(seen: u64) -> Option<(u64, Option<Vec<u8>>)> {
     let mut v = SURVIVOR_VOICE.lock().ok()?;

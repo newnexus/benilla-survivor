@@ -18,6 +18,9 @@ pub enum PanelKind {
 pub struct Panel {
     /// Distinct per window, so an answer to an old one is never taken for the new one.
     pub id: u64,
+    /// The quest giver speaking: their guid (for their portrait) and name.
+    pub giver: u64,
+    pub giver_name: String,
     pub entries: Vec<Entry>,
 }
 
