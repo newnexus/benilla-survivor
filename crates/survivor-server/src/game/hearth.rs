@@ -1,7 +1,7 @@
-//! The Hearthstone: used on a run from the right-hand bar, it charges for [`HEARTH_TIME`] while
-//! the player stands still, then takes them to the nearest town alive, the run ended as if they
-//! had walked in (what they found is kept). A step, death or the run ending some other way
-//! breaks it. The screen draws the charge from [`crate::hearth`].
+//! The Hearthstone: used on a run from the right-hand bar, it charges for [`HEARTH_TIME`] (on
+//! the move and under blows alike), then takes the player to the nearest town alive, the run
+//! ended as if they had walked in (what they found is kept). Only death or the run ending some
+//! other way breaks it. The screen draws the charge from [`crate::hearth`].
 
 use std::time::{Duration, Instant};
 
@@ -14,12 +14,9 @@ use crate::packets;
 pub(crate) const HEARTHSTONE: u32 = 6948;
 /// How long it charges.
 const HEARTH_TIME: Duration = Duration::from_secs(10);
-/// A step this far from where it started breaks it, yards.
-const STILL: f32 = 0.5;
 
-/// A charge under way: where the player stood, when it began and when it is done.
+/// A charge under way: when it began and when it is done.
 pub(crate) struct Hearth {
-    at: [f32; 3],
     start: Instant,
     done: Instant,
 }
@@ -39,7 +36,6 @@ impl Game {
         }
         eprintln!("survivor: hearthstone charging");
         self.hearth = Some(Hearth {
-            at: self.player.pos,
             start: now,
             done: now + HEARTH_TIME,
         });
@@ -51,9 +47,7 @@ impl Game {
             crate::hearth::set(None);
             return;
         };
-        let broken = !self.in_run()
-            || self.player.dead_until.is_some()
-            || super::dist2d(h.at, self.player.pos) > STILL;
+        let broken = !self.in_run() || self.player.dead_until.is_some();
         if broken {
             eprintln!("survivor: hearthstone broken");
             self.hearth = None;
