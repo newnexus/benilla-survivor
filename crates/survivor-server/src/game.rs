@@ -309,6 +309,8 @@ pub(crate) struct Game {
     start_spells: Vec<u32>,
     start_buttons: [u32; 120],
     teleport_counter: u32,
+    /// When a level gate last said why it turned the player back.
+    gate_said: Option<Instant>,
     /// The player has moved since the world entry: the client is past its loading screen, so a
     /// quest giver's panel will be seen.
     walked: bool,
@@ -495,6 +497,7 @@ impl Game {
             start_spells: Vec::new(),
             start_buttons: buttons,
             teleport_counter: 0,
+            gate_said: None,
             seeded: false,
             waves: None,
             countdown: None,
@@ -602,6 +605,9 @@ impl Game {
 
     /// The client moved its player.
     pub(crate) fn player_moved(&mut self, pos: [f32; 3], facing: f32) {
+        if self.turned_back_at_gate(pos) {
+            return;
+        }
         self.walked |= dist2d(pos, self.player.pos) > 0.1;
         self.player.pos = pos;
         self.player.facing = facing;
@@ -655,6 +661,7 @@ impl Game {
         self.tick_orbs(now, dt);
         crate::aim::set(self.player.target);
         crate::town::set_in_town(!self.in_run());
+        crate::town::set_gates_open(self.gates_open());
         self.open_pending_pick(now);
     }
 

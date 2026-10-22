@@ -41,9 +41,10 @@ pub const TOWNS: &[Town] = &[
             [1821.1, 1657.2], [1786.3, 1611.3],
         ],
         ground: 96.0,
-        // The road between the church and Executor Arren, facing the church.
-        arrive: [1844.5, 1606.0, 99.0],
-        arrive_facing: 1.6,
+        // The road between the church and Executor Arren, a yard above the ground (94.6), facing
+        // between the church and Deathguard Saltain up the road.
+        arrive: [1844.5, 1606.0, 95.6],
+        arrive_facing: 0.8,
         // The road from the crypt (where Deathguard Oliver's patrol turns), and the road out to
         // the rest of Tirisfall past Deathguard Phillip's.
         entrances: &[3.11, -0.33],
@@ -69,6 +70,76 @@ pub const TOWNS: &[Town] = &[
         armory: [2267.4, 243.0, 34.34, 0.6],
     },
 ];
+
+/// A level gate: a wall of blue flame across a way out of a starting area, which turns a run
+/// back until it reaches `level`.
+pub struct Gate {
+    pub name: &'static str,
+    /// The wall's two ends, hill to hill.
+    pub ends: [[f32; 2]; 2],
+    pub level: u32,
+    /// A point on the side the gate keeps the player on.
+    pub inside: [f32; 2],
+    /// About the ground height along it, where the map has none.
+    pub ground: f32,
+}
+
+pub const GATES: &[Gate] = &[Gate {
+    name: "Deathknell",
+    // Deathknell's gates: through the Forsaken outpost arch on the road out to the Glades
+    // (`tirisfalloutpost06` at 2157, 1279), across the valley from hill to hill.
+    ends: [[2116.0, 1260.0], [2198.0, 1298.0]],
+    level: 8,
+    inside: [1852.0, 1600.0],
+    ground: 50.0,
+}];
+
+/// A step past a gate's end still counts as crossing it, this many yards.
+const GATE_MARGIN: f32 = 3.0;
+
+/// Which side of `g`'s line `p` is on: the sign of the cross product.
+fn gate_side(g: &Gate, p: [f32; 2]) -> f32 {
+    let ([ax, ay], [bx, by]) = (g.ends[0], g.ends[1]);
+    (bx - ax) * (p[1] - ay) - (by - ay) * (p[0] - ax)
+}
+
+/// Whether a step from `from` to `to` goes out through `g`, from its inside to beyond it.
+pub fn gate_crossed(g: &Gate, from: [f32; 2], to: [f32; 2]) -> bool {
+    let inside = gate_side(g, g.inside).signum();
+    let (s0, s1) = (gate_side(g, from), gate_side(g, to));
+    if s0.signum() != inside || s1.signum() == inside || s1 == 0.0 && s0 == 0.0 {
+        return false;
+    }
+    // Where the step meets the line, as a part of the gate's length.
+    let t = s0 / (s0 - s1);
+    let hit = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
+    let ([ax, ay], [bx, by]) = (g.ends[0], g.ends[1]);
+    let len = (bx - ax).hypot(by - ay);
+    let along = ((hit[0] - ax) * (bx - ax) + (hit[1] - ay) * (by - ay)) / len;
+    (-GATE_MARGIN..=len + GATE_MARGIN).contains(&along)
+}
+
+/// A point `by` yards from `p` toward `g`'s inside, straight off its line.
+pub fn gate_inward(g: &Gate, p: [f32; 2], by: f32) -> [f32; 2] {
+    let ([ax, ay], [bx, by_]) = (g.ends[0], g.ends[1]);
+    let len = (bx - ax).hypot(by_ - ay).max(1e-3);
+    let mut n = [-(by_ - ay) / len, (bx - ax) / len];
+    if gate_side(g, [ax + n[0], ay + n[1]]).signum() != gate_side(g, g.inside).signum() {
+        n = [-n[0], -n[1]];
+    }
+    [p[0] + n[0] * by, p[1] + n[1] * by]
+}
+
+/// The gates open now, a bit each, for the screen: an open gate shows no flame.
+static GATES_OPEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn gate_open(i: usize) -> bool {
+    GATES_OPEN.load(std::sync::atomic::Ordering::Relaxed) & (1 << i) != 0
+}
+
+pub(crate) fn set_gates_open(mask: u32) {
+    GATES_OPEN.store(mask, std::sync::atomic::Ordering::Relaxed);
+}
 
 /// Whether the player stands in a town now, for the client's screens.
 static IN_TOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -165,6 +236,13 @@ mod tests {
         assert_eq!(town_at([1843.0, 1640.0, 98.0]), Some(0));
         assert_eq!(town_at([1849.0, 1580.0, 95.0]), Some(0));
         assert_eq!(town_at([2278.0, 296.0, 37.0]), Some(1));
+        // The Deathknell gate: out along the road is a crossing, back in or past its ends is not.
+        let g = &GATES[0];
+        assert!(gate_crossed(g, [2150.0, 1295.0], [2165.0, 1265.0]));
+        assert!(!gate_crossed(g, [2165.0, 1265.0], [2150.0, 1295.0]));
+        assert!(!gate_crossed(g, [2240.0, 1290.0], [2250.0, 1300.0]));
+        let back = gate_inward(g, [2157.0, 1279.0], 2.0);
+        assert!(gate_side(g, back).signum() == gate_side(g, g.inside).signum());
         // Deathknell's crypt door.
         assert_eq!(town_at([1679.0, 1668.0, 136.0]), None);
     }

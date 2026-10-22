@@ -32,6 +32,11 @@ const META_XP: [u32; 29] = [
 ];
 /// Stepping out through the barrier counts down this long before the run starts; stepping back
 /// in calls it off.
+/// A closed level gate puts the player back this many yards inside it, and says why at most
+/// this often.
+const GATE_PUSH: f32 = 2.0;
+const GATE_LIFT: f32 = 20.0;
+const GATE_SAY_EVERY: std::time::Duration = std::time::Duration::from_secs(3);
 /// The part of a run's picked-up copper that comes home with a living player, percent.
 const BROUGHT_HOME_PERCENT: u32 = 10;
 const COUNTDOWN: std::time::Duration = std::time::Duration::from_secs(3);
@@ -325,6 +330,47 @@ impl Game {
         self.values(self.player.guid, fl);
         // The worn gear's health on top.
         self.apply_gear();
+    }
+
+    /// The level gates open to the player, a bit each: a run that has reached their level.
+    pub(super) fn gates_open(&self) -> u32 {
+        crate::town::GATES
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| self.in_run() && self.player.level >= g.level)
+            .fold(0, |m, (i, _)| m | 1 << i)
+    }
+
+    /// A step out through a closed level gate: the player is put back on its inside, and told
+    /// why (not more than every few seconds).
+    pub(super) fn turned_back_at_gate(&mut self, to: [f32; 3]) -> bool {
+        let from = self.player.pos;
+        let open = self.gates_open();
+        let Some((i, g)) = crate::town::GATES.iter().enumerate().find(|&(i, g)| {
+            open & (1 << i) == 0
+                && crate::town::gate_crossed(g, [from[0], from[1]], [to[0], to[1]])
+        }) else {
+            return false;
+        };
+        let now = Instant::now();
+        let [x, y] = crate::town::gate_inward(g, [from[0], from[1]], GATE_PUSH);
+        // A little above where they stood: on a slope the ground there can be higher, and the
+        // client settles the player down onto it.
+        let back = [x, y, from[2] + GATE_LIFT];
+        eprintln!("survivor: the {} gate turned the player back (gate {i})", g.name);
+        self.teleport_counter += 1;
+        let ms = now.saturating_duration_since(self.started).as_millis() as u32;
+        self.send(
+            opcode::MSG_MOVE_TELEPORT_ACK,
+            &packets::teleport(self.player.guid, self.teleport_counter, back, self.player.facing, ms),
+        );
+        self.player.pos = back;
+        if self.gate_said.is_none_or(|t| now.saturating_duration_since(t) > GATE_SAY_EVERY) {
+            self.gate_said = Some(now);
+            let line = format!("Reach level {} to leave {}", g.level, g.name);
+            self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+        }
+        true
     }
 
     /// A dead run ends in the nearest town, standing.
