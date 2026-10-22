@@ -25,6 +25,7 @@ mod quest;
 mod rotation;
 mod save;
 mod spawner;
+mod spirit;
 mod town;
 mod upgrade;
 pub(crate) use gear::ARMORY_ENTRY;
@@ -361,6 +362,13 @@ pub(crate) struct Game {
     /// walks off, and which towns' chests the client has.
     armory_open: Option<u64>,
     armory_closed: bool,
+    /// The spirit healer's window, open (its board id), or closed by the player until they walk off.
+    spirit_open: Option<u64>,
+    spirit_closed: bool,
+    /// What the spirit healer has sold, and the souls to spend there: banked, and this run's.
+    healer: spirit::Healer,
+    souls: u32,
+    run_souls: u32,
     armory_shown: HashSet<usize>,
     /// The starting gear per equipment slot (its entry and item guid), and its weapon: what a
     /// run ends back in.
@@ -534,6 +542,11 @@ impl Game {
             seen: std::collections::HashMap::new(),
             armory_open: None,
             armory_closed: false,
+            spirit_open: None,
+            spirit_closed: false,
+            healer: spirit::Healer::default(),
+            souls: 0,
+            run_souls: 0,
             armory_shown: HashSet::new(),
             start_visible,
             worn_items: std::collections::HashMap::new(),
@@ -639,6 +652,7 @@ impl Game {
         self.take_pick_choice();
         self.take_panel_answer();
         self.take_armory_action();
+        self.take_spirit_action();
         self.pause_for_menu();
         if self.paused() {
             return;
@@ -657,6 +671,7 @@ impl Game {
             return;
         }
         self.open_armory_nearby();
+        self.open_spirit_nearby(now);
         self.walk_beats(now);
         self.guard_posts(now);
         self.update_npcs(now);
@@ -1288,7 +1303,7 @@ impl Game {
         }
         let Some(s) = self.spell(spell).cloned() else { return };
         let target = if Self::needs_target(&s) { target } else { None };
-        self.player.gcd_until = now + GCD;
+        self.player.gcd_until = now + self.gcd();
         let cast_ms = self.cast_ms_of(&s);
         self.send(
             opcode::SMSG_SPELL_START,

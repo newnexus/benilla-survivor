@@ -31,6 +31,8 @@ impl Game {
         let mut s = String::new();
         let _ = writeln!(s, "meta {} {}", self.meta.level, self.meta.xp);
         let _ = writeln!(s, "money {}", self.banked_money());
+        let _ = writeln!(s, "souls {}", self.souls);
+        let _ = writeln!(s, "healer {}", self.healer.to_line());
         let done: Vec<String> = self.quests_done().iter().map(u32::to_string).collect();
         let _ = writeln!(s, "done {}", done.join(","));
         for o in &self.collection {
@@ -78,6 +80,11 @@ impl Game {
                     self.meta.xp = num(w.next()) as u32;
                 }
                 Some("money") => self.money = num(w.next()) as u32,
+                Some("souls") => {
+                    self.souls = num(w.next()) as u32;
+                    crate::spirit::souls::set(self.souls);
+                }
+                Some("healer") => self.healer = super::spirit::Healer::from_line(&mut w),
                 Some("done") => {
                     let ids = w.next().unwrap_or("").split(',').filter_map(|v| v.parse().ok());
                     self.set_quests_done(ids);

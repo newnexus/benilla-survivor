@@ -190,7 +190,10 @@ impl Game {
         self.orbs.retain(|o| o.amount > 0);
         for (kind, amount) in taken {
             match kind {
-                Kind::Soul => self.grant_xp(0, amount),
+                Kind::Soul => {
+                    self.grant_xp(0, amount);
+                    self.soul_found();
+                }
                 Kind::Coin => self.add_money(amount),
             }
         }

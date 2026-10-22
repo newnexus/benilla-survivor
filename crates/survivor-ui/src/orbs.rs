@@ -176,6 +176,9 @@ struct PurseAmount(usize);
 
 /// The gold in the corner, under the player's portrait: gold, silver and copper with their
 /// coins, a part shown only when it has something (copper always).
+/// The purse's souls line, after the coins' amounts (0-2) and icons (3-5).
+const SOULS: usize = 6;
+
 fn show_purse(
     mut commands: Commands,
     screen: Res<crate::Screen>,
@@ -251,6 +254,22 @@ fn show_purse(
                         },
                     ));
                 }
+                // The souls to spend at the spirit healer.
+                row.spawn((
+                    PurseAmount(SOULS),
+                    Text::new(""),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 2.6 * vh,
+                        ..default()
+                    },
+                    TextColor(SOUL_BLUE),
+                    TextShadow::default(),
+                    Node {
+                        margin: UiRect::left(Val::Vh(0.8)),
+                        ..default()
+                    },
+                ));
             });
         *built = Some(height);
         return;
@@ -258,7 +277,18 @@ fn show_purse(
     let m = survivor_server::purse::money();
     let parts = [m / 10_000, m / 100 % 100, m % 100];
     let show = [parts[0] > 0, parts[0] > 0 || parts[1] > 0, true];
+    let souls = survivor_server::spirit::souls::get();
     for (a, mut text, mut node) in &mut amounts {
+        if a.0 == SOULS {
+            node.display = if souls > 0 { Display::Flex } else { Display::None };
+            if let Some(text) = text.as_mut() {
+                let s = format!("{souls} souls");
+                if text.0 != s {
+                    text.0 = s;
+                }
+            }
+            continue;
+        }
         let k = a.0 % 3;
         node.display = if show[k] { Display::Flex } else { Display::None };
         if let Some(text) = text.as_mut() {
