@@ -53,6 +53,7 @@ pub(crate) mod f {
     /// Twenty slots of `[quest id, counters | state << 24, timer]`.
     pub const PLAYER_QUEST_LOG_1_1: u16 = 198;
     pub const PLAYER_XP: u16 = 716;
+    pub const PLAYER_CHARACTER_POINTS1: u16 = 1102;
     pub const PLAYER_COINAGE: u16 = 1176;
     /// Byte 2: the extra action bars shown (`GetActionBarToggles`).
     pub const PLAYER_FIELD_BYTES: u16 = 1222;

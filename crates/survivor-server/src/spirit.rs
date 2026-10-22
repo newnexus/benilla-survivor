@@ -50,6 +50,8 @@ pub enum Action {
     Buy(Upgrade),
     /// Take a level off, its souls back.
     Refund(Upgrade),
+    /// Every talent point back, free.
+    ResetTalents,
     Close,
 }
 

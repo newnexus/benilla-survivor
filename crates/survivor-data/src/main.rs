@@ -702,6 +702,36 @@ impl ZoneLookup {
     }
 }
 
+/// The Forsaken classes' talents (`Talent.dbc` by `TalentTab.dbc`) to `talents.tsv`: the
+/// class, the talent, its tab's place among the class's three, its tier and column, its ranks'
+/// spells, and the talent (and 0-based rank) it needs first.
+fn export_talents(chain: &mut benilla_formats::Chain, out: &Path) -> Result<()> {
+    let catalog = benilla_formats::load_talent_catalog(chain)?;
+    let mut tsv = String::from("class\ttalent\ttab\trow\tcol\tranks\tprereq\tprereq_rank\n");
+    let mut n = 0;
+    for class in [1u8, 4, 5, 8, 9] {
+        for (page, tab) in catalog.tabs_for_class(UNDEAD as u8, class).iter().enumerate() {
+            for t in catalog.talents_in_tab(tab.id) {
+                let ranks: Vec<String> =
+                    t.ranks.iter().filter(|&&r| r != 0).map(u32::to_string).collect();
+                tsv.push_str(&format!(
+                    "{class}\t{}\t{page}\t{}\t{}\t{}\t{}\t{}\n",
+                    t.id,
+                    t.row,
+                    t.col,
+                    ranks.join(","),
+                    t.prereq_talent,
+                    t.prereq_rank
+                ));
+                n += 1;
+            }
+        }
+    }
+    std::fs::write(out.join("talents.tsv"), tsv)?;
+    eprintln!("survivor-data: {n} talents");
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(db) = args.first() else {
@@ -923,6 +953,7 @@ fn main() -> Result<()> {
     }
     std::fs::write(out.join("npcs.tsv"), &npcs)?;
     let gathers = export_gathers(&conn, &chain, &mut zones, &areas, out)?;
+    export_talents(&mut chain, out)?;
     let quests = export_quests(&conn, out, &npcs_used, &used, &gathers)?;
     if let Some(dir) = std::env::var_os("VOICEOVER_DIR") {
         let lines = copy_quest_voices(Path::new(&dir), out)?;

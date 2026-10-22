@@ -33,6 +33,9 @@ impl Game {
         let _ = writeln!(s, "money {}", self.banked_money());
         let _ = writeln!(s, "souls {}", self.souls);
         let _ = writeln!(s, "healer {}", self.healer.to_line());
+        for (id, rank) in &self.talents {
+            let _ = writeln!(s, "talent {id} {rank}");
+        }
         let done: Vec<String> = self.quests_done().iter().map(u32::to_string).collect();
         let _ = writeln!(s, "done {}", done.join(","));
         for o in &self.collection {
@@ -85,6 +88,13 @@ impl Game {
                     crate::spirit::souls::set(self.souls);
                 }
                 Some("healer") => self.healer = super::spirit::Healer::from_line(&mut w),
+                Some("talent") => {
+                    let id = num(w.next()) as u32;
+                    let rank = num(w.next()) as u32;
+                    if rank > 0 {
+                        self.talents.insert(id, rank);
+                    }
+                }
                 Some("done") => {
                     let ids = w.next().unwrap_or("").split(',').filter_map(|v| v.parse().ok());
                     self.set_quests_done(ids);

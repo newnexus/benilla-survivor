@@ -192,6 +192,7 @@ impl Game {
         self.send_money();
         self.wear_loadout();
         self.publish_chest_glow();
+        self.send_talents();
     }
 
     /// Crossing a barrier, either way; asked every tick.
@@ -442,6 +443,8 @@ impl Game {
         }
         if gained > 0 {
             eprintln!("survivor: meta level {}", self.meta.level);
+            // A camp level is a talent point.
+            self.send_talent_points();
         }
         if self.in_run() {
             return;

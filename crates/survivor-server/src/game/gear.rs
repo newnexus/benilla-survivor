@@ -454,6 +454,7 @@ impl Game {
             .map(|(_, x)| x)
             .sum::<f32>()
             + self.rune_bonus(stat)
+            + self.talent_bonus(stat)
     }
 
     /// What the gear changes on the character itself: health and run speed.

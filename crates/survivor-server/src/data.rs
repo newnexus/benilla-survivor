@@ -256,6 +256,19 @@ impl WorldData {
     }
 }
 
+/// A talent of a class (`talents.tsv`): its tree (0-2), tier and column, its ranks' spells, and
+/// the talent (and 0-based rank) it needs first.
+#[derive(Clone, Debug)]
+pub(crate) struct TalentRow {
+    pub(crate) class: u8,
+    pub(crate) id: u32,
+    pub(crate) tab: u32,
+    pub(crate) row: u32,
+    pub(crate) ranks: Vec<u32>,
+    pub(crate) prereq: u32,
+    pub(crate) prereq_rank: u32,
+}
+
 #[derive(Default)]
 pub(crate) struct WorldData {
     pub(crate) creatures: HashMap<u32, CreatureTemplate>,
@@ -278,6 +291,7 @@ pub(crate) struct WorldData {
     pub(crate) start_items: Vec<(u8, u32, u32)>,
     pub(crate) spells: HashMap<u32, SpellInfo>,
     pub(crate) class_spells: Vec<ClassSpell>,
+    pub(crate) talents: Vec<TalentRow>,
     /// `(class, button, action, type)`: the starting action bar.
     pub(crate) start_actions: Vec<(u8, u8, u32, u8)>,
 }
@@ -567,6 +581,20 @@ impl WorldData {
                 targets: three(r.get(23)),
             };
             d.spells.insert(s.id, s);
+        }
+        for r in rows(&dir, "talents.tsv") {
+            d.talents.push(TalentRow {
+                class: num(r.first()),
+                id: num(r.get(1)),
+                tab: num(r.get(2)),
+                row: num(r.get(3)),
+                ranks: r
+                    .get(5)
+                    .map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect())
+                    .unwrap_or_default(),
+                prereq: num(r.get(6)),
+                prereq_rank: num(r.get(7)),
+            });
         }
         for r in rows(&dir, "class_spells.tsv") {
             d.class_spells.push(ClassSpell {

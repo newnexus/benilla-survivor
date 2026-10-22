@@ -202,6 +202,19 @@ fn spawn_window(
                             });
                     });
                 }
+                // Talents: every point back, free.
+                page.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::Center,
+                    margin: UiRect::top(Val::Vh(1.0)),
+                    ..default()
+                })
+                .with_children(|r| {
+                    r.spawn(step_button(id, Action::ResetTalents, true, 30.0))
+                        .with_children(|b| {
+                            b.spawn(text(font, "Reset talents (free)", 2.8 * vh, WHITE));
+                        });
+                });
             });
         });
 }

@@ -27,6 +27,7 @@ mod runes;
 mod save;
 mod spawner;
 mod spirit;
+mod talents;
 mod town;
 mod upgrade;
 pub(crate) use gear::ARMORY_ENTRY;
@@ -378,6 +379,8 @@ pub(crate) struct Game {
     runes: runes::Runes,
     /// This run's kills, for its summary.
     run_kills: u32,
+    /// Talents taken, by talent id: their rank.
+    talents: std::collections::HashMap<u32, u32>,
     armory_shown: HashSet<usize>,
     /// The starting gear per equipment slot (its entry and item guid), and its weapon: what a
     /// run ends back in.
@@ -561,6 +564,7 @@ impl Game {
             banished: std::collections::HashSet::new(),
             runes: runes::Runes::default(),
             run_kills: 0,
+            talents: std::collections::HashMap::new(),
             armory_shown: HashSet::new(),
             start_visible,
             worn_items: std::collections::HashMap::new(),

@@ -246,6 +246,7 @@ impl Game {
                 self.save();
                 self.post_spirit();
             }
+            crate::spirit::Action::ResetTalents => self.reset_talents(),
             // Free to undo: the level's souls come back in full.
             crate::spirit::Action::Refund(u) => {
                 let Some(back) = self.healer.refund(u) else { return };

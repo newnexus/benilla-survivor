@@ -188,6 +188,15 @@ fn session(
                     g.use_item(bag, slot);
                 }
             }
+            opcode::CMSG_LEARN_TALENT => {
+                // `u32 talent id, u32 rank` (0-based, the one asked for).
+                let (Some(a), Some(b)) = (body.get(..4), body.get(4..8)) else { continue };
+                let id = u32::from_le_bytes(a.try_into().expect("four bytes"));
+                let rank = u32::from_le_bytes(b.try_into().expect("four bytes"));
+                if let Some(g) = playing.lock().expect("game").as_mut() {
+                    g.learn_talent(id, rank);
+                }
+            }
             opcode::CMSG_CANCEL_CAST => {
                 if let Some(g) = playing.lock().expect("game").as_mut() {
                     g.cancel_cast();
