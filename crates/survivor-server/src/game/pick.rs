@@ -52,6 +52,10 @@ impl Pick {
     }
 }
 
+/// How long the world plays on after a level-up before its cards come: the client's level-up
+/// flash, sped up (`survivor-ui`'s `DING_RATE`).
+const DING_HOLD: std::time::Duration = std::time::Duration::from_millis(800);
+
 /// Of the cards dealt, about this share are upgrades to known skills.
 const BOOST_SHARE: f32 = 0.5;
 
@@ -272,8 +276,16 @@ impl Game {
     /// At the end of a tick: a level gained and no pick open stops the world for one.
     pub(super) fn open_pending_pick(&mut self, now: Instant) {
         if self.picks_pending == 0 || self.pick.is_some() || self.player.dead_until.is_some() {
+            self.pick_due = None;
             return;
         }
+        // The world plays on while WoW's level-up flash plays on the player; the cards come as
+        // it ends.
+        let due = *self.pick_due.get_or_insert(now + DING_HOLD);
+        if now < due {
+            return;
+        }
+        self.pick_due = None;
         let (cards, boosts) = self.deal();
         if cards.is_empty() {
             self.picks_pending = 0;

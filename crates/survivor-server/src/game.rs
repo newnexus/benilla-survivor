@@ -282,6 +282,8 @@ pub(crate) struct Game {
     picks_pending: u32,
     /// The open level-up pick; the world is paused while it is set.
     pick: Option<pick::Pick>,
+    /// When a level-up's cards are due, the world playing on until then.
+    pick_due: Option<Instant>,
     /// The root and unroot counter the client's acks echo.
     root_counter: u32,
     /// What the player carries and wears.
@@ -477,6 +479,7 @@ impl Game {
             buttons,
             picks_pending: 0,
             pick: None,
+            pick_due: None,
             root_counter: 0,
             pack,
             meals: Vec::new(),
@@ -642,6 +645,10 @@ impl Game {
         self.take_nearby_gather(now);
         self.update_armory_chests();
         self.open_nearby_chest(now);
+        if self.paused() {
+            // A chest opened: nothing more moves this tick.
+            return;
+        }
         self.open_armory_nearby();
         self.walk_beats(now);
         self.guard_posts(now);

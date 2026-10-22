@@ -71,16 +71,8 @@ fn follow_aim(mut last: Local<Option<u64>>, mut select: MessageWriter<benilla_ap
 }
 
 /// The level-up flash (`Spells\LevelUp\LevelUp.mdx`, a 1.87 s clip) plays this many times
-/// faster, and the cards come up as it ends.
+/// faster; the server deals the cards as it ends, the world playing on until then.
 const DING_RATE: f32 = 2.5;
-const DING_HOLD: f32 = 0.8;
-
-/// When the offer on its way first appeared, and when the last one closed.
-#[derive(Default)]
-struct Ding {
-    since: Option<(u64, f32)>,
-    closed: f32,
-}
 
 /// Above the world and the game's interface; below benilla's loading cover (1000).
 const SCREEN_Z: i32 = 950;
@@ -432,27 +424,8 @@ fn show_offer(
     mut fonts: ResMut<Assets<Font>>,
     mut images: ResMut<Assets<Image>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    time: Res<Time<Real>>,
-    mut ding: Local<Ding>,
 ) {
     let offer = picks::offer().filter(|o| screen.answered != Some(o.id));
-    // The world is already frozen; the cards wait while WoW's own level-up flash plays on the
-    // player. A second pick straight after the first shows at once.
-    let now = time.elapsed_secs();
-    match &offer {
-        Some(o) if screen.shown.is_none() => {
-            let since = *ding.since.get_or_insert((o.id, now));
-            if since.0 == o.id && now - since.1 < DING_HOLD && now - ding.closed > 0.5 {
-                return;
-            }
-        }
-        Some(_) => {}
-        None => {
-            if ding.since.take().is_some() {
-                ding.closed = now;
-            }
-        }
-    }
     // Text sizes are pixels, so a resized window lays the screen out again.
     let height = window.single().map_or(720.0, Window::height);
     let wanted = offer.as_ref().map(|o| (o.id, height));
