@@ -39,7 +39,7 @@ cp "$NDK/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/lib/$TRIPLE/libc++_
 # 3. The game data, carried in the APK as assets/Data and unpacked by the game on its first
 # launch: the packed Tirisfall data (survivor-pack's output, patch.MPQ + survivor/). Game data:
 # it lives under app/build, never in git.
-DATA="${DATA:-$HOME/Dropbox/TirisfallSurvivor/Data}"
+DATA="${DATA:-$HOME/Dropbox/TirisfallSurvivor/PC/Data}"
 [ -f "$DATA/patch.MPQ" ] && [ -f "$DATA/survivor/spawns.tsv" ]     || { echo "No packed data at $DATA (set DATA=<folder with patch.MPQ and survivor/>)" >&2; exit 1; }
 STAGE="$HERE/app/build/survivor-assets/Data"
 mkdir -p "$STAGE/survivor"
