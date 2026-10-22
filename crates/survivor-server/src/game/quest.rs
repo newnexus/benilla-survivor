@@ -168,12 +168,10 @@ impl Game {
                 .iter()
                 .find(|n| n.guid == g)
                 .is_none_or(|n| dist2d(n.here(now), me) > TALK_RESET);
-            if far {
+            // Walking off leaves the window open, and its answer still counts from afar; once it
+            // is answered or closed, the giver may speak again after the player has walked off.
+            if far && self.open_panel.is_none() {
                 self.talked = None;
-                // Walked off: the window goes too.
-                if self.open_panel.take().is_some() {
-                    quest_board::clear();
-                }
             }
             return;
         }
