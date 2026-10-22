@@ -298,6 +298,9 @@ fn spawn_panel(
         PanelKind::Offer => "Accept",
         PanelKind::Reward => "Complete",
     };
+    // The talk stands on the left of the screen, as WoW's own quest window; the choice after it
+    // in the middle.
+    let left = step == Step::Talk;
     commands
         .spawn((
             PanelRoot,
@@ -306,18 +309,28 @@ fn spawn_panel(
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Row,
-                // On the left of the screen, as WoW's own quest window.
-                justify_content: JustifyContent::FlexStart,
+                justify_content: if left {
+                    JustifyContent::FlexStart
+                } else {
+                    JustifyContent::Center
+                },
                 align_items: AlignItems::Center,
                 column_gap: Val::Vh(2.0),
-                padding: UiRect::left(Val::Vh(3.0)),
+                padding: UiRect::left(Val::Vh(if left { 3.0 } else { 0.0 })),
                 ..default()
             },
             GlobalZIndex(PANEL_Z),
             Pickable::IGNORE,
-            // Shrunk about the screen's centre, then slid back to its left edge.
+            // Shrunk about the screen's centre, then, on the left, slid back to its left edge.
             UiTransform {
-                translation: Val2::new(Val::Percent(-(1.0 - crate::SHRINK) * 50.0), Val::Px(0.0)),
+                translation: Val2::new(
+                    Val::Percent(if left {
+                        -(1.0 - crate::SHRINK) * 50.0
+                    } else {
+                        0.0
+                    }),
+                    Val::Px(0.0),
+                ),
                 scale: Vec2::splat(crate::SHRINK),
                 ..default()
             },
