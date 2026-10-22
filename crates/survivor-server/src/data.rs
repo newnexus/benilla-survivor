@@ -244,6 +244,17 @@ pub fn quest_voice(quest: u32, complete: bool) -> Option<Vec<u8>> {
     std::fs::read(data_dir()?.join("voice").join(format!("{quest}-{kind}.mp3"))).ok()
 }
 
+/// How long `quest`'s spoken line lasts, seconds (`voice/lengths.tsv`).
+pub fn quest_voice_seconds(quest: u32, complete: bool) -> Option<f32> {
+    let kind = if complete { "complete" } else { "accept" };
+    let name = format!("{quest}-{kind}");
+    let text = std::fs::read_to_string(data_dir()?.join("voice").join("lengths.tsv")).ok()?;
+    text.lines().find_map(|l| {
+        let (n, s) = l.split_once('\t')?;
+        (n == name).then(|| s.trim().parse().ok()).flatten()
+    })
+}
+
 /// Where the exported tables live: `$SURVIVOR_DATA`, else `Data\survivor` beside the binary (a
 /// packaged build), else this crate's own `data` folder (a dev build).
 fn data_dir() -> Option<PathBuf> {

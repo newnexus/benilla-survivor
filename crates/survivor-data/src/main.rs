@@ -402,12 +402,25 @@ const OBJECTIVE_GAMEOBJECT: i64 = 0x8000_0000;
 
 /// `voice/`: the VoiceOver addon's spoken lines (`$VOICEOVER_DIR`, its unzipped
 /// `AI_VoiceOverData_Vanilla`) for every quest in `quests.tsv`, as it names them:
-/// `<id>-accept.mp3` and `<id>-complete.mp3`. Returns how many it copied.
+/// `<id>-accept.mp3` and `<id>-complete.mp3`, and their lengths from the pack's own table
+/// (`voice/lengths.tsv`: name, seconds), for the window to pace its text by. Returns how many
+/// lines it copied.
 fn copy_quest_voices(pack: &Path, out: &Path) -> Result<usize> {
     let from = pack.join("generated").join("sounds").join("quests");
     let to = out.join("voice");
     std::fs::create_dir_all(&to)?;
     let tsv = std::fs::read_to_string(out.join("quests.tsv"))?;
+    // `["3902-accept"] = 28.368875,` lines of the addon's Lua table.
+    let table = std::fs::read_to_string(pack.join("generated").join("sound_length_table.lua"))
+        .unwrap_or_default();
+    let seconds = |name: &str| {
+        let key = format!("[\"{name}\"] = ");
+        table.lines().find_map(|l| {
+            let rest = l.trim().strip_prefix(&key)?;
+            rest.trim_end_matches(',').trim().parse::<f32>().ok()
+        })
+    };
+    let mut lengths = String::from("name\tseconds\n");
     let mut n = 0;
     for id in tsv.lines().skip(1).filter_map(|l| l.split('\t').next()) {
         for kind in ["accept", "complete"] {
@@ -415,9 +428,13 @@ fn copy_quest_voices(pack: &Path, out: &Path) -> Result<usize> {
             if from.join(&name).is_file() {
                 std::fs::copy(from.join(&name), to.join(&name))?;
                 n += 1;
+                if let Some(s) = seconds(&format!("{id}-{kind}")) {
+                    writeln!(lengths, "{id}-{kind}\t{s:.3}")?;
+                }
             }
         }
     }
+    std::fs::write(to.join("lengths.tsv"), lengths)?;
     Ok(n)
 }
 

@@ -124,7 +124,7 @@ pub mod purse {
 }
 pub mod bar;
 mod data;
-pub use data::quest_voice;
+pub use data::{quest_voice, quest_voice_seconds};
 mod game;
 mod packets;
 pub mod picks;

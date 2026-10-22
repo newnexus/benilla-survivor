@@ -1,7 +1,10 @@
-//! The survivor's quest giver window, in place of the stock one: the giver's story on a sheet of
-//! parchment, the objectives and the rewards floating beside it on smaller sheets, one big
-//! Accept (or Complete), and an X to close. The text is all there at once and scrolls with the
-//! mouse wheel or a finger; a thumb on the window moves no one.
+//! The survivor's quest giver window, in place of the stock one, in two steps. Walking up to a
+//! giver starts them talking: a dark, tinted page with their portrait and name, the quest's
+//! title, and its story in white, appearing as they speak it (paced by their spoken line, the
+//! VoiceOver addon's). Continue (or Space) skips ahead; when they finish, or on Continue, a
+//! second page brings the objectives, the rewards, and Accept (or Complete) and Decline. An X
+//! closes it at any time. The story scrolls with the mouse wheel or a finger; a thumb on the
+//! window moves no one.
 //!
 //! The server posts the window through [`survivor_server::quest_board`] and takes the answer the
 //! same way.
@@ -14,18 +17,41 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::RelativeCursorPosition;
 use survivor_server::quest_board::{self, Answer, Panel, PanelKind};
 
-/// Ink on parchment, and the headings'.
-const INK: Color = Color::srgb(0.2, 0.12, 0.04);
-const HEADING: Color = Color::srgb(0.1, 0.05, 0.0);
+/// The pages: a dark tint over the world, a faint gold edge, white text, gold headings.
+const PAGE: Color = Color::srgba(0.035, 0.03, 0.025, 0.86);
+const PAGE_EDGE: Color = Color::srgba(0.8, 0.62, 0.28, 0.5);
+const WHITE: Color = Color::srgb(0.95, 0.93, 0.88);
+const DIM: Color = Color::srgb(0.68, 0.65, 0.58);
+const TAB: Color = Color::srgba(1.0, 1.0, 1.0, 0.04);
+const TAB_ON: Color = Color::srgba(0.85, 0.65, 0.25, 0.22);
 const BUTTON_RED: Color = Color::srgb(0.5, 0.04, 0.02);
 const BUTTON_RED_LIT: Color = Color::srgb(0.68, 0.08, 0.04);
+const BUTTON_DARK: Color = Color::srgb(0.16, 0.14, 0.12);
+const BUTTON_DARK_LIT: Color = Color::srgb(0.26, 0.23, 0.2);
 const BUTTON_EDGE: Color = Color::srgb(0.75, 0.6, 0.25);
 const PANEL_Z: i32 = crate::SCREEN_Z - 10;
 /// A mouse wheel notch scrolls this many pixels.
 const WHEEL_LINE: f32 = 40.0;
+/// Without a spoken line, the story appears at about this many letters a second, a speaking pace.
+const LETTERS_PER_SECOND: f32 = 16.0;
+/// The portrait's frame: its gold, and its size in screen heights.
+const FRAME_GOLD: Color = Color::srgb(0.85, 0.65, 0.2);
+const PORTRAIT: f32 = 13.0;
 
 pub(crate) fn plugin(app: &mut App) {
-    app.add_systems(Update, (show_panel, show_portrait, press_buttons, light_buttons, scroll_text, block_touch));
+    app.init_resource::<Talk>().add_systems(
+        Update,
+        (
+            show_panel,
+            reveal_story,
+            show_portrait,
+            press_buttons,
+            light_buttons,
+            scroll_text,
+            block_touch,
+        )
+            .chain(),
+    );
 }
 
 #[derive(Component)]
@@ -35,33 +61,65 @@ struct PanelRoot;
 #[derive(Component)]
 struct TalkerPortrait;
 
-/// The portrait's frame: its gold, and its size in screen heights.
-const FRAME_GOLD: Color = Color::srgb(0.85, 0.65, 0.2);
-const PORTRAIT: f32 = 16.0;
-
 /// The story's scrolling area.
 #[derive(Component)]
 struct StoryScroll;
+
+/// The story's text, appearing as the giver speaks it.
+#[derive(Component)]
+struct Story(String);
 
 /// A part of the window a thumb must not walk through.
 #[derive(Component)]
 pub(crate) struct Sheet;
 
+/// A button answering the server: Accept, or Decline and X (both close).
 #[derive(Component)]
 struct PanelButton {
     panel: u64,
     answer: Answer,
 }
 
+/// The talk step's button: on to the objectives.
+#[derive(Component)]
+struct ContinueButton;
+
+/// The two steps of the window.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum Step {
+    /// The giver speaks, the story appears.
+    #[default]
+    Talk,
+    /// The objectives, the rewards, Accept and Decline.
+    Decide,
+}
+
+/// The talk on screen: when it began, how long it lasts, and the step the window is at.
+#[derive(Resource, Default)]
+struct Talk {
+    start: f32,
+    seconds: f32,
+    step: Step,
+}
+
+impl Talk {
+    /// How much of the story is out, 0 to 1.
+    fn told(&self, now: f32) -> f32 {
+        match self.step {
+            Step::Decide => 1.0,
+            Step::Talk => ((now - self.start) / self.seconds.max(0.1)).clamp(0.0, 1.0),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Shown {
     root: Option<Entity>,
-    /// The window, its tab and the screen height it was laid out for.
-    panel: Option<(u64, usize, f32)>,
-    parchment: Option<Handle<Image>>,
+    /// The window, its tab, the screen height and the step it was laid out for.
+    panel: Option<(u64, usize, f32, Step)>,
     /// The tab open, for the window `.0`.
     tab: (u64, usize),
-    /// The quest whose line was last spoken: the window and its tab.
+    /// The quest whose talk began last: the window and its tab.
     spoken: Option<(u64, usize)>,
 }
 
@@ -69,19 +127,22 @@ struct Shown {
 #[derive(Component)]
 struct QuestTab(usize);
 
-const TAB: Color = Color::srgba(0.25, 0.15, 0.06, 0.25);
-const TAB_ON: Color = Color::srgba(0.45, 0.25, 0.05, 0.6);
-
+#[allow(clippy::too_many_arguments)]
 fn show_panel(
     mut commands: Commands,
     screen: Res<crate::Screen>,
     mut images: ResMut<Assets<Image>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
     tabs: Query<(&QuestTab, &Interaction), Changed<Interaction>>,
+    continues: Query<&Interaction, (With<ContinueButton>, Changed<Interaction>)>,
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time<Real>>,
+    mut talk: ResMut<Talk>,
     mut shown: Local<Shown>,
 ) {
     let panel = quest_board::current();
     let height = window.single().map_or(720.0, Window::height);
+    let now = time.elapsed_secs();
     if let Some(p) = &panel {
         if shown.tab.0 != p.id {
             shown.tab = (p.id, 0);
@@ -93,8 +154,9 @@ fn show_panel(
         }
     }
     let selected = shown.tab.1;
-    // The giver reads the open quest aloud (the VoiceOver addon's line, `survivor_server::
-    // quest_voice`); another tab or a closed window cuts it off.
+    // A new quest on screen: the giver starts reading it aloud (the VoiceOver addon's line,
+    // `survivor_server::quest_voice`), and the story starts to appear; another tab or a closed
+    // window cuts the line off.
     let line = panel
         .as_ref()
         .and_then(|p| p.entries.get(selected).map(|e| ((p.id, selected), e)));
@@ -105,12 +167,28 @@ fn show_panel(
             panel.as_ref().map_or(0, |p| p.giver),
             std::sync::atomic::Ordering::Relaxed,
         );
-        let bytes = line.and_then(|(_, e)| {
+        let voice = line.and_then(|(_, e)| {
             survivor_server::quest_voice(e.quest, e.kind == PanelKind::Reward)
         });
-        benilla_app::survivor_voice(bytes);
+        let spoken = voice.is_some();
+        benilla_app::survivor_voice(voice);
+        if let Some((_, e)) = line {
+            let complete = e.kind == PanelKind::Reward;
+            let read = e.text.chars().count() as f32 / LETTERS_PER_SECOND;
+            talk.start = now;
+            talk.seconds = survivor_server::quest_voice_seconds(e.quest, complete)
+                .filter(|_| spoken)
+                .unwrap_or(read);
+            talk.step = Step::Talk;
+        }
     }
-    let wanted = panel.as_ref().map(|p| (p.id, selected, height));
+    // On to the objectives: the talk ends, or the player goes on.
+    let go_on = keys.just_pressed(KeyCode::Space)
+        || continues.iter().any(|i| *i == Interaction::Pressed);
+    if line.is_some() && talk.step == Step::Talk && (go_on || now - talk.start >= talk.seconds) {
+        talk.step = Step::Decide;
+    }
+    let wanted = panel.as_ref().map(|p| (p.id, selected, height, talk.step));
     if wanted == shown.panel {
         return;
     }
@@ -121,10 +199,6 @@ fn show_panel(
     let Some(panel) = panel else { return };
     let Some(library) = &screen.library else { return };
     let library = library.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let parchment = shown
-        .parchment
-        .get_or_insert_with(|| images.add(parchment()))
-        .clone();
     // Gold, silver and copper side by side in one texture, a quarter of its width each.
     let coins: [Option<Coin>; 3] = library
         .blp("Interface\\MoneyFrame\\UI-MoneyIcons")
@@ -145,16 +219,61 @@ fn show_panel(
     if panel.entries.is_empty() {
         return;
     }
-    let root = spawn_panel(&mut commands, &panel, selected.min(panel.entries.len() - 1), &parchment, &coins, &fonts);
+    let selected = selected.min(panel.entries.len() - 1);
+    let root = spawn_panel(&mut commands, &panel, selected, talk.step, &coins, &fonts);
     shown.root = Some(root);
     shown.panel = wanted;
+}
+
+/// A dark page of the window.
+fn page(extra: Node) -> impl Bundle {
+    (
+        Sheet,
+        Node {
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::all(Val::Vh(3.0)),
+            row_gap: Val::Vh(1.4),
+            border: UiRect::all(Val::Px(1.5)),
+            border_radius: BorderRadius::all(Val::Vh(1.2)),
+            ..extra
+        },
+        BackgroundColor(PAGE),
+        BorderColor::all(PAGE_EDGE),
+    )
+}
+
+/// A button's colours, at rest and under the cursor.
+#[derive(Component, Clone, Copy)]
+struct Shade(Color, Color);
+
+const RED: Shade = Shade(BUTTON_RED, BUTTON_RED_LIT);
+const DARK: Shade = Shade(BUTTON_DARK, BUTTON_DARK_LIT);
+
+/// A big button in `shade`, its label added by the caller.
+fn button(shade: Shade, width_vh: f32) -> impl Bundle {
+    (
+        shade,
+        Button,
+        Sheet,
+        Node {
+            width: Val::Vh(width_vh),
+            height: Val::Vh(8.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Vh(0.35)),
+            border_radius: BorderRadius::all(Val::Vh(1.2)),
+            ..default()
+        },
+        BackgroundColor(shade.0),
+        BorderColor::all(BUTTON_EDGE),
+    )
 }
 
 fn spawn_panel(
     commands: &mut Commands,
     panel: &Panel,
     selected: usize,
-    parchment: &Handle<Image>,
+    step: Step,
     coins: &[Option<Coin>; 3],
     (font, title_font): &(Handle<Font>, Handle<Font>),
 ) -> Entity {
@@ -168,18 +287,6 @@ fn spawn_panel(
             },
             TextColor(color),
             VhText(size_vh),
-        )
-    };
-    let sheet = |extra: Node| {
-        (
-            Sheet,
-            ImageNode::new(parchment.clone()).with_mode(NodeImageMode::Stretch),
-            Node {
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Vh(3.0)),
-                row_gap: Val::Vh(1.2),
-                ..extra
-            },
         )
     };
     let id = panel.id;
@@ -198,7 +305,7 @@ fn spawn_panel(
                 flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                column_gap: Val::Vh(2.5),
+                column_gap: Val::Vh(2.0),
                 ..default()
             },
             GlobalZIndex(PANEL_Z),
@@ -206,72 +313,18 @@ fn spawn_panel(
             UiTransform::from_scale(Vec2::splat(crate::SHRINK)),
         ))
         .with_children(|root| {
-            // Who is speaking: their face in a gold frame, their name under it.
-            root.spawn(Node {
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                align_self: AlignSelf::FlexStart,
-                margin: UiRect::top(Val::Vh(4.0)),
-                row_gap: Val::Vh(1.0),
-                ..default()
-            })
-            .with_children(|col| {
-                col.spawn((
-                    Node {
-                        width: Val::Vh(PORTRAIT),
-                        height: Val::Vh(PORTRAIT),
-                        border: UiRect::all(Val::Vh(0.6)),
-                        border_radius: BorderRadius::all(Val::Percent(50.0)),
-                        padding: UiRect::all(Val::Vh(0.3)),
-                        ..default()
-                    },
-                    BorderColor::all(FRAME_GOLD),
-                    BackgroundColor(Color::srgb(0.05, 0.03, 0.02)),
-                ))
-                .with_children(|frame| {
-                    frame.spawn((
-                        TalkerPortrait,
-                        ImageNode::default(),
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            border_radius: BorderRadius::all(Val::Percent(50.0)),
-                            ..default()
-                        },
-                        Visibility::Hidden,
-                    ));
-                });
-                if !panel.giver_name.is_empty() {
-                    col.spawn((
-                        Sheet,
-                        ImageNode::new(parchment.clone()).with_mode(NodeImageMode::Stretch),
-                        Node {
-                            padding: UiRect::axes(Val::Vh(1.5), Val::Vh(0.6)),
-                            ..default()
-                        },
-                    ))
-                    .with_children(|tag| {
-                        tag.spawn(text(&panel.giver_name, title_font, 3.0, HEADING));
-                    });
-                }
-            });
             // The giver's quests, a tab each, when there is more than one.
             if panel.entries.len() > 1 {
-                root.spawn((
-                    Sheet,
-                    ImageNode::new(parchment.clone()).with_mode(NodeImageMode::Stretch),
-                    Node {
-                        width: Val::Vh(32.0),
-                        flex_direction: FlexDirection::Column,
-                        padding: UiRect::all(Val::Vh(2.0)),
-                        row_gap: Val::Vh(1.0),
-                        align_self: AlignSelf::FlexStart,
-                        margin: UiRect::top(Val::Vh(7.0)),
-                        ..default()
-                    },
-                ))
+                root.spawn(page(Node {
+                    width: Val::Vh(30.0),
+                    align_self: AlignSelf::FlexStart,
+                    margin: UiRect::top(Val::Vh(10.0)),
+                    padding: UiRect::all(Val::Vh(2.0)),
+                    row_gap: Val::Vh(1.0),
+                    ..default()
+                }))
                 .with_children(|tabs| {
-                    tabs.spawn(text("Quests", title_font, 4.4, HEADING));
+                    tabs.spawn(text("Quests", title_font, 4.0, crate::GOLD));
                     for (k, q) in panel.entries.iter().enumerate() {
                         let mark = match q.kind {
                             PanelKind::Offer => "!",
@@ -290,8 +343,8 @@ fn spawn_panel(
                             BackgroundColor(if k == selected { TAB_ON } else { TAB }),
                         ))
                         .with_children(|b| {
-                            b.spawn(text(mark, title_font, 3.6, Color::srgb(0.75, 0.42, 0.0)));
-                            b.spawn((text(&q.title, font, 2.9, INK), Node {
+                            b.spawn(text(mark, title_font, 3.4, crate::GOLD));
+                            b.spawn((text(&q.title, font, 2.8, WHITE), Node {
                                 flex_shrink: 1.0,
                                 ..default()
                             }));
@@ -299,40 +352,75 @@ fn spawn_panel(
                     }
                 });
             }
-            // The story.
-            root.spawn(sheet(Node {
-                width: Val::Vh(78.0),
-                max_width: Val::Vw(50.0),
-                height: Val::Vh(86.0),
+            // The talk: who speaks, the quest, the story as it is told.
+            root.spawn(page(Node {
+                width: Val::Vh(84.0),
+                max_width: Val::Vw(52.0),
+                height: Val::Vh(74.0),
                 ..default()
             }))
             .with_children(|s| {
-                s.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        justify_content: JustifyContent::SpaceBetween,
-                        align_items: AlignItems::FlexStart,
-                        ..default()
-                    },
-                ))
+                s.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Vh(2.0),
+                    ..default()
+                })
                 .with_children(|h| {
-                    h.spawn((text(&e.title, title_font, 6.0, HEADING), Node {
+                    h.spawn((
+                        Node {
+                            width: Val::Vh(PORTRAIT),
+                            height: Val::Vh(PORTRAIT),
+                            flex_shrink: 0.0,
+                            border: UiRect::all(Val::Vh(0.5)),
+                            border_radius: BorderRadius::all(Val::Percent(50.0)),
+                            padding: UiRect::all(Val::Vh(0.25)),
+                            ..default()
+                        },
+                        BorderColor::all(FRAME_GOLD),
+                        BackgroundColor(Color::srgb(0.02, 0.015, 0.01)),
+                    ))
+                    .with_children(|frame| {
+                        frame.spawn((
+                            TalkerPortrait,
+                            ImageNode::default(),
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Percent(50.0)),
+                                ..default()
+                            },
+                            Visibility::Hidden,
+                        ));
+                    });
+                    h.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        flex_grow: 1.0,
                         flex_shrink: 1.0,
+                        row_gap: Val::Vh(0.4),
                         ..default()
-                    }));
+                    })
+                    .with_children(|names| {
+                        if !panel.giver_name.is_empty() {
+                            names.spawn(text(&panel.giver_name, title_font, 3.0, crate::GOLD));
+                        }
+                        names.spawn(text(&e.title, title_font, 5.4, WHITE));
+                    });
                     h.spawn((
                         PanelButton {
                             panel: id,
                             answer: Answer::Close,
                         },
                         Button,
+                        RED,
                         Node {
-                            width: Val::Vh(7.0),
-                            height: Val::Vh(7.0),
+                            width: Val::Vh(6.0),
+                            height: Val::Vh(6.0),
                             flex_shrink: 0.0,
+                            align_self: AlignSelf::FlexStart,
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
-                            border: UiRect::all(Val::Vh(0.35)),
+                            border: UiRect::all(Val::Vh(0.3)),
                             border_radius: BorderRadius::all(Val::Vh(1.0)),
                             ..default()
                         },
@@ -340,9 +428,18 @@ fn spawn_panel(
                         BorderColor::all(BUTTON_EDGE),
                     ))
                     .with_children(|b| {
-                        b.spawn(text("X", font, 4.5, crate::GOLD));
+                        b.spawn(text("X", font, 3.8, crate::GOLD));
                     });
                 });
+                // A thin gold rule under the heading.
+                s.spawn((
+                    Node {
+                        height: Val::Px(1.5),
+                        width: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(PAGE_EDGE),
+                ));
                 s.spawn((
                     StoryScroll,
                     RelativeCursorPosition::default(),
@@ -356,93 +453,132 @@ fn spawn_panel(
                     },
                 ))
                 .with_children(|t| {
-                    t.spawn(text(&e.text, font, 3.4, INK));
+                    t.spawn((Story(e.text.clone()), text("", font, 3.4, WHITE)));
                 });
-            });
-            // The objectives and rewards, floating beside it, and the button under them.
-            root.spawn(Node {
-                width: Val::Vh(62.0),
-                max_width: Val::Vw(40.0),
-                height: Val::Vh(86.0),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Vh(2.5),
-                ..default()
-            })
-            .with_children(|col| {
-                if e.kind == PanelKind::Offer && !e.objectives.is_empty() {
-                    col.spawn(sheet(Node::default())).with_children(|o| {
-                        o.spawn(text("Quest Objectives", title_font, 5.0, HEADING));
-                        o.spawn(text(&e.objectives, font, 3.3, INK));
-                    });
-                }
-                col.spawn(sheet(Node::default())).with_children(|r| {
-                    r.spawn(text("Rewards", title_font, 5.0, HEADING));
-                    if e.money > 0 {
-                    r.spawn(Node {
+                // While the giver talks: go on without waiting.
+                if step == Step::Talk {
+                    s.spawn(Node {
                         flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Vh(1.0),
+                        justify_content: JustifyContent::FlexEnd,
                         ..default()
                     })
-                    .with_children(|line| {
-                        line.spawn(text("You will receive:", font, 3.3, INK));
-                        let (g, s, c) = (e.money / 10_000, e.money / 100 % 100, e.money % 100);
-                        for (amount, coin) in [(g, &coins[0]), (s, &coins[1]), (c, &coins[2])] {
-                            if amount == 0 && !(e.money == 0 && std::ptr::eq(coin, &coins[2])) {
-                                continue;
-                            }
-                            line.spawn(text(&amount.to_string(), font, 3.6, HEADING));
-                            if let Some(coin) = coin {
-                                line.spawn((
-                                    ImageNode {
-                                        image: coin.image.clone(),
-                                        rect: Some(coin.rect),
-                                        ..default()
-                                    },
-                                    Node {
-                                        width: Val::Vh(3.2),
-                                        height: Val::Vh(3.2),
-                                        ..default()
-                                    },
-                                ));
-                            }
-                        }
+                    .with_children(|f| {
+                        f.spawn((ContinueButton, button(DARK, 34.0)))
+                            .with_children(|b| {
+                                b.spawn(text("Continue   [Space]", font, 3.4, crate::GOLD));
+                            });
                     });
+                }
+            });
+            // Then: what to do, what it pays, and the answer.
+            if step == Step::Decide {
+                root.spawn(page(Node {
+                    width: Val::Vh(58.0),
+                    max_width: Val::Vw(36.0),
+                    height: Val::Vh(74.0),
+                    ..default()
+                }))
+                .with_children(|col| {
+                    if e.kind == PanelKind::Offer && !e.objectives.is_empty() {
+                        col.spawn(text("Quest Objectives", title_font, 4.4, crate::GOLD));
+                        col.spawn(text(&e.objectives, font, 3.2, WHITE));
+                    }
+                    col.spawn(text("Rewards", title_font, 4.4, crate::GOLD));
+                    if e.money > 0 {
+                        col.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Vh(1.0),
+                            ..default()
+                        })
+                        .with_children(|line| {
+                            line.spawn(text("You will receive:", font, 3.2, DIM));
+                            let (g, s, c) = (e.money / 10_000, e.money / 100 % 100, e.money % 100);
+                            for (amount, coin) in [(g, &coins[0]), (s, &coins[1]), (c, &coins[2])] {
+                                if amount == 0 {
+                                    continue;
+                                }
+                                line.spawn(text(&amount.to_string(), font, 3.4, WHITE));
+                                if let Some(coin) = coin {
+                                    line.spawn((
+                                        ImageNode {
+                                            image: coin.image.clone(),
+                                            rect: Some(coin.rect),
+                                            ..default()
+                                        },
+                                        Node {
+                                            width: Val::Vh(3.0),
+                                            height: Val::Vh(3.0),
+                                            ..default()
+                                        },
+                                    ));
+                                }
+                            }
+                        });
                     }
                     if e.xp > 0 {
-                        r.spawn(text(&format!("Experience: {}", e.xp), font, 3.3, INK));
+                        col.spawn(text(&format!("Experience: {}", e.xp), font, 3.2, WHITE));
                     }
-                });
-                col.spawn(Node {
-                    flex_grow: 1.0,
-                    ..default()
-                });
-                col.spawn((
-                    PanelButton {
-                        panel: id,
-                        answer: Answer::Accept(e.quest),
-                    },
-                    Button,
-                    Sheet,
-                    Node {
-                        align_self: AlignSelf::FlexEnd,
-                        width: Val::Vh(34.0),
-                        height: Val::Vh(10.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Vh(0.45)),
-                        border_radius: BorderRadius::all(Val::Vh(1.4)),
+                    col.spawn(Node {
+                        flex_grow: 1.0,
                         ..default()
-                    },
-                    BackgroundColor(BUTTON_RED),
-                    BorderColor::all(BUTTON_EDGE),
-                ))
-                .with_children(|b| {
-                    b.spawn(text(accept_label, font, 5.0, crate::GOLD));
+                    });
+                    col.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceBetween,
+                        column_gap: Val::Vh(2.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        row.spawn((
+                            PanelButton {
+                                panel: id,
+                                answer: Answer::Close,
+                            },
+                            button(DARK, 24.0),
+                        ))
+                        .with_children(|b| {
+                            b.spawn(text("Decline", font, 4.0, crate::GOLD));
+                        });
+                        row.spawn((
+                            PanelButton {
+                                panel: id,
+                                answer: Answer::Accept(e.quest),
+                            },
+                            button(RED, 26.0),
+                        ))
+                        .with_children(|b| {
+                            b.spawn(text(accept_label, font, 4.4, crate::GOLD));
+                        });
+                    });
                 });
-            });
+            }
         })
         .id()
+}
+
+/// The story appears as it is told, the newest line kept in view; whole once the talk is done.
+fn reveal_story(
+    talk: Res<Talk>,
+    time: Res<Time<Real>>,
+    mut stories: Query<(&Story, &mut Text)>,
+    mut areas: Query<(&mut ScrollPosition, &ComputedNode), With<StoryScroll>>,
+) {
+    let told = talk.told(time.elapsed_secs());
+    for (story, mut text) in &mut stories {
+        let total = story.0.chars().count();
+        let shown = ((total as f32 * told).ceil() as usize).min(total);
+        let end = story.0.char_indices().nth(shown).map_or(story.0.len(), |(i, _)| i);
+        if text.0.len() != end {
+            text.0 = story.0[..end].to_owned();
+            if talk.step == Step::Talk {
+                for (mut pos, node) in &mut areas {
+                    let k = node.inverse_scale_factor();
+                    pos.0.y = ((node.content_size.y - node.size.y) * k).max(0.0);
+                }
+            }
+        }
+    }
 }
 
 /// One coin of the money texture.
@@ -485,12 +621,12 @@ fn press_buttons(buttons: Query<(&PanelButton, &Interaction), Changed<Interactio
 }
 
 fn light_buttons(
-    mut buttons: Query<(&Interaction, &mut BackgroundColor), (With<PanelButton>, Changed<Interaction>)>,
+    mut buttons: Query<(&Interaction, &Shade, &mut BackgroundColor), Changed<Interaction>>,
     mut texts: Query<(&VhText, &mut TextFont), Added<VhText>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    for (i, mut bg) in &mut buttons {
-        bg.0 = if *i == Interaction::None { BUTTON_RED } else { BUTTON_RED_LIT };
+    for (i, shade, mut bg) in &mut buttons {
+        bg.0 = if *i == Interaction::None { shade.0 } else { shade.1 };
     }
     let vh = window.single().map_or(7.2, |w| w.height() / 100.0);
     for (size, mut f) in &mut texts {
