@@ -86,7 +86,11 @@ impl Game {
 
     /// The spawner's tick: the wave kind, the boss, the next spawn.
     pub(super) fn tick_waves(&mut self, now: Instant) {
-        if !self.in_run() || self.player.dead_until.is_some() {
+        if !self.in_run() {
+            crate::run_clock::set(None);
+            return;
+        }
+        if self.player.dead_until.is_some() {
             return;
         }
         let Some(mut w) = self.waves.take() else { return };
@@ -118,6 +122,12 @@ impl Game {
             w.bosses += 1;
             self.spawn(&mut w, entry, level + 2 + round as u32 * 3, Some((scale, round)), now);
         }
+        let (next, _) = BOSSES[w.bosses % BOSSES.len()];
+        crate::run_clock::set(Some(crate::run_clock::Clock {
+            survived: now.saturating_duration_since(w.started).as_secs_f32(),
+            boss_in: w.next_boss.saturating_duration_since(now).as_secs_f32(),
+            boss: self.data.creatures.get(&next).map_or_else(String::new, |t| t.name.clone()),
+        }));
         let alive = self.mobs.iter().filter(|m| m.spawned && m.alive()).count();
         let cap = ((CAP.0 + CAP.1 * minutes) as usize).min(CAP.2);
         if now >= w.next_spawn && alive < cap {

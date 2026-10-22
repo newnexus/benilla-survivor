@@ -7,6 +7,33 @@
 pub mod aim;
 pub mod armory;
 
+/// A run's clock, for the screen: how long it has lasted and when the next boss comes. Frozen
+/// while the world is paused (the server's tick stops); none in town.
+pub mod run_clock {
+    use std::sync::Mutex;
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Clock {
+        /// Seconds since the run began.
+        pub survived: f32,
+        /// Seconds until the next boss, and its name.
+        pub boss_in: f32,
+        pub boss: String,
+    }
+
+    static CLOCK: Mutex<Option<Clock>> = Mutex::new(None);
+
+    pub fn current() -> Option<Clock> {
+        CLOCK.lock().ok()?.clone()
+    }
+
+    pub(crate) fn set(clock: Option<Clock>) {
+        if let Ok(mut c) = CLOCK.lock() {
+            *c = clock;
+        }
+    }
+}
+
 /// Where the quest givers with something for the player stand, while in town, for the screen's
 /// trails to them.
 pub mod trails {

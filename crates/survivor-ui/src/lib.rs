@@ -25,6 +25,7 @@ mod barrier;
 mod ground;
 mod roads;
 mod countdown;
+mod run_clock;
 mod quest_frame;
 mod quest_panel;
 mod chest_glow;
@@ -50,7 +51,7 @@ impl Plugin for SurvivorUiPlugin {
             .add_systems(Update, (show_offer, take_card, hover_cards).chain())
             .add_systems(Update, follow_aim)
             .add_systems(Update, preload_library)
-            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin, armory::plugin, orbs::plugin, trails::plugin))
+            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, run_clock::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin, armory::plugin, orbs::plugin, trails::plugin))
             .add_systems(Update, shrink_cards);
     }
 }
