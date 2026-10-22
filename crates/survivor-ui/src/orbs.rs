@@ -148,14 +148,9 @@ fn sync_orbs(
                 });
             }
             Kind::Coin => {
-                // Copper below 100, silver below 10,000; then single, 5 or 25 of that metal.
-                let metal = match o.amount {
-                    0..100 => 0,
-                    100..10_000 => 1,
-                    _ => 2,
-                };
-                let single = o.amount / [1, 100, 10_000][metal];
-                let size = match single {
+                // Gold only: a single coin, or the bigger 5 and 25.
+                let metal = 2;
+                let size = match o.amount {
                     0..5 => 0,
                     5..25 => 1,
                     _ => 2,
@@ -301,8 +296,9 @@ fn show_purse(
         return;
     }
     let m = survivor_server::purse::money();
-    let parts = [m / 10_000, m / 100 % 100, m % 100];
-    let show = [parts[0] > 0, parts[0] > 0 || parts[1] > 0, true];
+    // Gold only.
+    let parts = [m, 0, 0];
+    let show = [true, false, false];
     let souls = survivor_server::spirit::souls::get();
     for (a, mut text, mut node) in &mut amounts {
         if a.0 == SOULS {

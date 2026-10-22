@@ -69,18 +69,7 @@ fn spawn_summary(commands: &mut Commands, font: &Handle<Font>, s: &Summary, vh: 
     };
     let minutes = s.seconds as u32 / 60;
     let secs = s.seconds as u32 % 60;
-    let money = |c: u32| {
-        let (g, sv, cp) = (c / 10_000, c / 100 % 100, c % 100);
-        let mut parts = Vec::new();
-        if g > 0 {
-            parts.push(format!("{g}g"));
-        }
-        if g > 0 || sv > 0 {
-            parts.push(format!("{sv}s"));
-        }
-        parts.push(format!("{cp}c"));
-        parts.join(" ")
-    };
+    let money = |c: u32| format!("{c} gold");
     let rows: Vec<(String, String, Color)> = vec![
         ("Time survived".into(), format!("{minutes}:{secs:02}"), WHITE),
         ("Level reached".into(), s.level.to_string(), WHITE),

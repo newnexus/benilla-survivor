@@ -31,9 +31,9 @@ const TRAINERS: &[(u8, u32)] = &[
     (9, 2127), // Rupert Boch
 ];
 
-/// A rank's price in copper: by the level it comes at, squared.
+/// A rank's price in gold: five for each level it comes at.
 fn price(req_level: u32) -> u32 {
-    (25 * req_level * req_level).max(10)
+    5 * req_level.max(1)
 }
 
 impl Game {

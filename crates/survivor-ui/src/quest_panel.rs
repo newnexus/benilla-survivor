@@ -520,7 +520,7 @@ fn spawn_panel(
                             .with_children(|line| {
                                 line.spawn(text("You will receive:", font, 3.2, DIM));
                                 let (g, s, c) =
-                                    (e.money / 10_000, e.money / 100 % 100, e.money % 100);
+                                    (e.money, 0, 0);
                                 for (amount, coin) in
                                     [(g, &coins[0]), (s, &coins[1]), (c, &coins[2])]
                                 {

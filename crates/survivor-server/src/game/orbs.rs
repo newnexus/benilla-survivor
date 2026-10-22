@@ -23,7 +23,7 @@ const TAKE: f32 = 1.2;
 /// Orbs float this high off the ground.
 const FLOAT: f32 = 1.0;
 /// The coins there are, in copper, largest first.
-const COINS: [u32; 9] = [250_000, 50_000, 10_000, 2_500, 500, 100, 25, 5, 1];
+const COINS: [u32; 3] = [25, 5, 1];
 /// Coins fall scattered this far round the corpse.
 const SCATTER: f32 = 0.9;
 /// A field soul lies beside every this many creature homes, this far from it; it is worth

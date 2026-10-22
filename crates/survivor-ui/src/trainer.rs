@@ -90,20 +90,9 @@ fn text(font: &Handle<Font>, s: &str, size: f32, color: Color) -> impl Bundle {
     )
 }
 
-/// Copper as "1g 2s 3c", the parts that have something.
+/// An amount of gold.
 fn money(c: u32) -> String {
-    let (g, s, cp) = (c / 10_000, c / 100 % 100, c % 100);
-    let mut parts = Vec::new();
-    if g > 0 {
-        parts.push(format!("{g}g"));
-    }
-    if s > 0 {
-        parts.push(format!("{s}s"));
-    }
-    if cp > 0 || parts.is_empty() {
-        parts.push(format!("{cp}c"));
-    }
-    parts.join(" ")
+    format!("{c} gold")
 }
 
 fn show_window(

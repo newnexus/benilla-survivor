@@ -13,9 +13,9 @@ use crate::packets::{self, f, Fields, Update};
 /// How close the player stands to open a chest, and how far to walk off before it asks again.
 const OPEN_RANGE: f32 = 3.5;
 const ASK_RESET: f32 = 7.0;
-/// The first chest of a run costs this many copper, each one after this much more.
+/// The first chest of a run costs this much gold, each one after 75% more than the one before.
 const FIRST_PRICE: u32 = 50;
-const PRICE_GROWTH: f32 = 1.6;
+const PRICE_GROWTH: f32 = 1.75;
 /// Copper a kill drops, per level of the creature: between these.
 const GOLD_PER_LEVEL: (u32, u32) = (3, 8);
 
@@ -52,19 +52,8 @@ pub(crate) fn chests(data: &crate::data::WorldData) -> Vec<Chest> {
 }
 
 /// `1g 20s 5c`.
-pub(crate) fn money_text(copper: u32) -> String {
-    let (g, s, c) = (copper / 10_000, copper / 100 % 100, copper % 100);
-    let mut parts = Vec::new();
-    if g > 0 {
-        parts.push(format!("{g}g"));
-    }
-    if s > 0 {
-        parts.push(format!("{s}s"));
-    }
-    if c > 0 || parts.is_empty() {
-        parts.push(format!("{c}c"));
-    }
-    parts.join(" ")
+pub(crate) fn money_text(gold: u32) -> String {
+    format!("{gold} gold")
 }
 
 impl Game {
