@@ -202,7 +202,7 @@ struct PurseAmount(usize);
 
 /// The gold in the corner, under the player's portrait: gold, silver and copper with their
 /// coins, a part shown only when it has something (copper always).
-/// The purse's souls line, after the coins' amounts (0-2) and icons (3-5).
+/// The purse's souls line (in town only), after the coins' amounts (0-2) and icons (3-5).
 const SOULS: usize = 6;
 
 fn show_purse(
@@ -306,7 +306,9 @@ fn show_purse(
     let souls = survivor_server::spirit::souls::get();
     for (a, mut text, mut node) in &mut amounts {
         if a.0 == SOULS {
-            node.display = if souls > 0 { Display::Flex } else { Display::None };
+            // Only in town: a run's souls are counted quietly until they come home.
+            let shown = souls > 0 && survivor_server::town::in_town();
+            node.display = if shown { Display::Flex } else { Display::None };
             if let Some(text) = text.as_mut() {
                 let s = format!("{souls} souls");
                 if text.0 != s {

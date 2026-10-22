@@ -22,6 +22,9 @@ pub struct Town {
     pub arrive_facing: f32,
     /// The collection chest: where it stands and which way it faces.
     pub armory: [f32; 4],
+    /// Where a run that died comes back: the town's graveyard (`WorldSafeLocs.dbc`) when it
+    /// lies inside the barrier, and which way the player faces there.
+    pub graveyard: [f32; 4],
     /// Where the roads cross the barrier, as angles from the centre (`atan2(dy, dx)`, WoW's
     /// facing convention): four guards stand just outside each.
     pub entrances: &'static [f32],
@@ -50,6 +53,8 @@ pub const TOWNS: &[Town] = &[
         entrances: &[3.11, -0.33],
         // Beside Harold Raims, the vendor, clear of the quest givers.
         armory: [1838.6, 1571.4, 96.6, 0.8],
+        // Deathknell's graveyard, by the spirit healer, facing it.
+        graveyard: [1882.9, 1629.1, 94.4, 3.14],
     },
     Town {
         name: "Brill",
@@ -68,6 +73,8 @@ pub const TOWNS: &[Town] = &[
         entrances: &[],
         // In the Gallows' End Tavern, beside Innkeeper Renee.
         armory: [2267.4, 243.0, 34.34, 0.6],
+        // Brill's graveyard (2348.7, 492.0) lies outside its barrier: the tavern's door instead.
+        graveyard: [2272.0, 300.0, 38.0, 3.1],
     },
 ];
 

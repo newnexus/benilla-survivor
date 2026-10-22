@@ -261,9 +261,9 @@ impl Game {
 
     /// A soul orb picked up on a run.
     pub(super) fn soul_found(&mut self) {
+        // Counted quietly: the purse shows the banked souls, in town.
         if self.in_run() {
             self.run_souls += 1;
-            crate::spirit::souls::set(self.souls + self.run_souls);
         }
     }
 

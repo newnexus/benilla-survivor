@@ -393,14 +393,21 @@ impl Game {
     fn take_to_town(&mut self, died: bool, now: Instant) {
         let i = nearest(self.player.pos);
         let t = &TOWNS[i];
+        // The dead come back at the graveyard, a little above it so they land on the ground.
+        let (at, facing) = if died {
+            let g = t.graveyard;
+            ([g[0], g[1], g[2] + 1.0], g[3])
+        } else {
+            (t.arrive, t.arrive_facing)
+        };
         self.teleport_counter += 1;
         let ms = now.saturating_duration_since(self.started).as_millis() as u32;
         self.send(
             opcode::MSG_MOVE_TELEPORT_ACK,
-            &packets::teleport(self.player.guid, self.teleport_counter, t.arrive, t.arrive_facing, ms),
+            &packets::teleport(self.player.guid, self.teleport_counter, at, facing, ms),
         );
-        self.player.pos = t.arrive;
-        self.player.facing = t.arrive_facing;
+        self.player.pos = at;
+        self.player.facing = facing;
         if self.in_run() {
             self.enter_town(i, died, now);
         } else {
