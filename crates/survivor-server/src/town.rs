@@ -86,9 +86,11 @@ pub struct Gate {
 
 pub const GATES: &[Gate] = &[Gate {
     name: "Deathknell",
-    // Deathknell's gates: through the Forsaken outpost arch on the road out to the Glades
-    // (`tirisfalloutpost06` at 2157, 1279), across the valley from hill to hill.
-    ends: [[2116.0, 1260.0], [2198.0, 1298.0]],
+    // Deathknell's gates: three wooden walls across the road out to the Glades, two palisades
+    // (`tirisfalloutpost02`) and then the arch (`tirisfalloutpost06` at 2157, 1279). The flame
+    // stands just before the first palisade (at 2154, 1320), on Deathknell's side, along it and
+    // on across the valley from hill to hill.
+    ends: [[2111.0, 1304.0], [2193.0, 1342.0]],
     level: 8,
     inside: [1852.0, 1600.0],
     ground: 50.0,
@@ -238,10 +240,10 @@ mod tests {
         assert_eq!(town_at([2278.0, 296.0, 37.0]), Some(1));
         // The Deathknell gate: out along the road is a crossing, back in or past its ends is not.
         let g = &GATES[0];
-        assert!(gate_crossed(g, [2150.0, 1295.0], [2165.0, 1265.0]));
-        assert!(!gate_crossed(g, [2165.0, 1265.0], [2150.0, 1295.0]));
+        assert!(gate_crossed(g, [2145.0, 1337.0], [2160.0, 1310.0]));
+        assert!(!gate_crossed(g, [2160.0, 1310.0], [2145.0, 1337.0]));
         assert!(!gate_crossed(g, [2240.0, 1290.0], [2250.0, 1300.0]));
-        let back = gate_inward(g, [2157.0, 1279.0], 2.0);
+        let back = gate_inward(g, [2152.0, 1323.0], 2.0);
         assert!(gate_side(g, back).signum() == gate_side(g, g.inside).signum());
         // Deathknell's crypt door.
         assert_eq!(town_at([1679.0, 1668.0, 136.0]), None);
