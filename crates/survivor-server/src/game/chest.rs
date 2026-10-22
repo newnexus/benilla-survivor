@@ -78,8 +78,20 @@ impl Game {
     /// `copper` more in the purse, said as WoW says a loot.
     pub(super) fn add_money(&mut self, copper: u32) {
         self.money += copper;
+        if self.in_run() {
+            self.run_found += copper;
+        }
         self.send(opcode::SMSG_LOOT_MONEY_NOTIFY, &copper.to_le_bytes());
         self.send_money();
+    }
+
+    /// The town purse, whether or not a run is on: what the save file keeps.
+    pub(super) fn banked_money(&self) -> u32 {
+        if self.in_run() {
+            self.town_money
+        } else {
+            self.money
+        }
     }
 
     pub(super) fn send_money(&self) {
@@ -183,7 +195,7 @@ impl Game {
             money_text(price),
             money_text(self.chest_price)
         );
-        self.open_chest_offer(i, now);
+        self.open_chest_offer(i, price, now);
     }
 
     /// `CMSG_GAMEOBJECT_QUERY`: a chest's name and look.

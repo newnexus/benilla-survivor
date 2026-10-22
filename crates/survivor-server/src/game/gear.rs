@@ -9,7 +9,10 @@
 //! | shoulders, weapons | spell and weapon damage | | wrists | a chance to hit one more enemy |
 //! | chest | health | | hands | pickup range |
 //! | waist | cooldowns | | back | experience |
-//! | legs | mana, rage and energy cost | | | |
+//! | legs | costs, or a regeneration | | | |
+//!
+//! Half the legs lower costs; the other half quicken a resource by their material: cloth mana,
+//! leather mana or energy, mail and plate mana or rage.
 //!
 //! Taking a card wears the item for the run; taking the one already worn raises its item level
 //! instead (up to [`MAX_UPGRADES`]). What is worn when the player walks back into town, alive,
@@ -26,6 +29,8 @@ use crate::picks::{Card, ItemCard};
 
 /// The cards a chest offers.
 const LOOT: usize = 3;
+/// A chest recycled gives back this part of its price, percent.
+const RECYCLE_PERCENT: u32 = 20;
 /// Rarity weights, common to legendary, and how far each pushes the slot's stat.
 const RARITY_WEIGHTS: [u32; 5] = [48, 28, 15, 7, 2];
 const RARITY_RATE: [f32; 5] = [1.0, 1.4, 1.8, 1.8, 2.2];
@@ -48,6 +53,9 @@ pub(crate) enum GearStat {
     ExtraTarget,
     Pickup,
     Experience,
+    ManaRegen,
+    EnergyRegen,
+    RageRegen,
 }
 
 impl GearStat {
@@ -72,6 +80,7 @@ impl GearStat {
             Self::ExtraTarget => 0.15,
             Self::Pickup => 0.2,
             Self::Experience => 0.08,
+            Self::ManaRegen | Self::EnergyRegen | Self::RageRegen => 0.15,
         }
     }
 
@@ -87,6 +96,9 @@ impl GearStat {
             Self::ExtraTarget => format!("{p}% chance to hit one more enemy"),
             Self::Pickup => format!("+{p}% pickup range"),
             Self::Experience => format!("+{p}% experience"),
+            Self::ManaRegen => format!("+{p}% mana regeneration"),
+            Self::EnergyRegen => format!("+{p}% energy regeneration"),
+            Self::RageRegen => format!("+{:.1} rage a second in combat", x * RAGE_REGEN_SCALE),
         }
     }
 
@@ -106,7 +118,11 @@ impl GearStat {
     }
 }
 
-const ALL_STATS: [GearStat; 9] = [
+/// A share of [`GearStat::RageRegen`] in rage a second: 0.15 is 1.5.
+pub(crate) const RAGE_REGEN_SCALE: f32 = 10.0;
+
+/// In this order in the save file: new stats go at the end.
+const ALL_STATS: [GearStat; 12] = [
     GearStat::Crit,
     GearStat::Damage,
     GearStat::Health,
@@ -116,7 +132,14 @@ const ALL_STATS: [GearStat; 9] = [
     GearStat::ExtraTarget,
     GearStat::Pickup,
     GearStat::Experience,
+    GearStat::ManaRegen,
+    GearStat::EnergyRegen,
+    GearStat::RageRegen,
 ];
+
+/// `ItemSubclass` of armour: cloth, leather, mail, plate.
+const CLOTH: u32 = 1;
+const LEATHER: u32 = 2;
 
 /// One rolled item: in a chest, worn, or brought home.
 #[derive(Clone, Debug)]
@@ -261,13 +284,21 @@ impl Game {
             }
             roll -= w;
         }
-        let slot = self
-            .data
-            .items
-            .get(&entry)
+        let template = self.data.items.get(&entry);
+        let subclass = template.map_or(0, |t| t.subclass);
+        let slot = template
             .and_then(|t| super::super::world::equip_slot(t.inventory_type))
             .unwrap_or(15);
-        let main = GearStat::of_slot(slot);
+        let mut main = GearStat::of_slot(slot);
+        // Legs: half lower costs, half quicken a resource their material suits.
+        if main == GearStat::Cost && self.rng.next() % 2 == 0 {
+            let choices: &[GearStat] = match subclass {
+                CLOTH => &[GearStat::ManaRegen],
+                LEATHER => &[GearStat::ManaRegen, GearStat::EnergyRegen],
+                _ => &[GearStat::ManaRegen, GearStat::RageRegen],
+            };
+            main = choices[(self.rng.next() % choices.len() as u64) as usize];
+        }
         let mut stats = vec![(main, main.base() * RARITY_RATE[usize::from(rarity)])];
         if rarity >= 3 {
             let others: Vec<GearStat> = ALL_STATS.iter().copied().filter(|&s| s != main).collect();
@@ -385,10 +416,7 @@ impl Game {
                 );
                 self.run_gear.insert(slot, g);
                 let mut fl = Fields::default();
-                fl.set(
-                    f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE,
-                    t.entry,
-                );
+                self.wear_in_slot(slot, &mut fl);
                 self.values(self.player.guid, fl);
                 if slot == 15 && t.damage.1 > 0.0 {
                     self.player.weapon = (
@@ -484,6 +512,46 @@ impl Game {
         self.save();
     }
 
+    /// Put what `slot` now holds on the character: the chest gear worn there, or else the
+    /// starting gear. Chest gear gets an item object of its own in the equipment slot, so the
+    /// character window shows it with its tooltip; the model shows its look. The fields go in
+    /// `fl`; the item object, made or dropped, is sent at once, before them.
+    fn wear_in_slot(&mut self, slot: u16, fl: &mut Fields) {
+        let start = self.start_visible.get(&slot).copied().unwrap_or((0, 0));
+        let (entry, guid) = match self.run_gear.get(&slot).map(|g| g.entry) {
+            Some(entry) if entry == start.0 => start,
+            Some(entry) if self.worn_items.get(&slot).is_some_and(|w| w.1 == entry) => {
+                (entry, self.worn_items[&slot].0)
+            }
+            Some(entry) => {
+                let Some(t) = self.data.items.get(&entry) else { return };
+                self.next_worn += 1;
+                // Beside the starting items' guids (`world::self_create`), clear of them.
+                let guid = 0x4000_0000_0000_0000
+                    | (self.player.guid << 16)
+                    | (0x8000 + self.next_worn % 0x8000);
+                let u = packets::item_create(guid, self.player.guid, t, 1);
+                self.send(opcode::SMSG_UPDATE_OBJECT, &packets::update_object(&[u]));
+                (entry, guid)
+            }
+            None => start,
+        };
+        let made = guid != start.1;
+        let old = if made {
+            self.worn_items.insert(slot, (guid, entry))
+        } else {
+            self.worn_items.remove(&slot)
+        };
+        if let Some((old, _)) = old.filter(|o| o.0 != guid) {
+            self.send(
+                opcode::SMSG_UPDATE_OBJECT,
+                &packets::update_object(&[packets::Update::OutOfRange(vec![old])]),
+            );
+        }
+        fl.guid(f::PLAYER_INV_SLOT_HEAD + slot * 2, guid);
+        fl.set(f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE, entry);
+    }
+
     /// The collection's worn things on the character: the run gear, the looks, the weapon, the
     /// stats.
     pub(super) fn wear_loadout(&mut self) {
@@ -503,11 +571,7 @@ impl Game {
             .collect();
         let mut fl = Fields::default();
         for slot in slots {
-            let entry = self
-                .run_gear
-                .get(&slot)
-                .map_or_else(|| self.start_visible.get(&slot).copied().unwrap_or(0), |g| g.entry);
-            fl.set(f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE, entry);
+            self.wear_in_slot(slot, &mut fl);
         }
         self.values(self.player.guid, fl);
         self.player.weapon = self.start_weapon;
@@ -704,7 +768,8 @@ impl Game {
     }
 
     /// A chest opened: its items on the card screen, the world paused.
-    pub(super) fn open_chest_offer(&mut self, i: usize, now: Instant) {
+    /// Chest `i`, bought for `price`: its cards, or recycled for [`RECYCLE_PERCENT`] of it.
+    pub(super) fn open_chest_offer(&mut self, i: usize, price: u32, now: Instant) {
         let (cards, loot) = self.chest_cards(i);
         if cards.is_empty() {
             return;
@@ -714,8 +779,10 @@ impl Game {
             .chest_templates
             .get(&self.chests[i].entry)
             .map(|t| t.name.clone());
-        let id = crate::picks::post_titled(self.player.level, cards, title);
-        self.pick = Some(super::pick::Pick::chest(id, now, loot));
+        let refund = price * RECYCLE_PERCENT / 100;
+        let recycle = format!("Recycle: {} back", super::chest::money_text(refund));
+        let id = crate::picks::post_titled(self.player.level, cards, title, Some(recycle));
+        self.pick = Some(super::pick::Pick::chest(id, now, loot, refund));
         self.freeze(now);
         self.publish_chest_glow();
     }

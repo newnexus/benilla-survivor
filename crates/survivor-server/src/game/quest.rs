@@ -359,7 +359,21 @@ impl Game {
         }
     }
 
-    /// A creature of `entry` killed: every quest wanting it counts one.
+    /// Some quest in the log still wants more of `target` (a creature, or an object's entry
+    /// with [`crate::data::OBJECTIVE_GAMEOBJECT`]).
+    pub(super) fn quest_wants(&self, target: u32) -> bool {
+        self.quests.slots.iter().flatten().any(|a| {
+            self.quest(a.id).is_some_and(|q| {
+                q.kills
+                    .iter()
+                    .zip(a.counts)
+                    .any(|(&(e, need), have)| e == target && have < need)
+            })
+        })
+    }
+
+    /// A creature of `entry` killed (or a gather object of `entry` taken, with
+    /// [`crate::data::OBJECTIVE_GAMEOBJECT`]): every quest wanting it counts one.
     pub(super) fn quest_kill(&mut self, entry: u32, guid: u64) {
         for slot in 0..SLOTS {
             let Some(mut a) = self.quests.slots[slot] else { continue };

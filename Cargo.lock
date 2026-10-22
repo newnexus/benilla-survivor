@@ -6307,6 +6307,7 @@ dependencies = [
  "benilla-app",
  "benilla-assets",
  "benilla-formats",
+ "benilla-world",
  "bevy",
  "survivor-server",
 ]

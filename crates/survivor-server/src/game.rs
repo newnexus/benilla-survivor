@@ -15,6 +15,7 @@ use crate::wire::Sender;
 
 mod aura;
 mod chest;
+mod gather;
 mod gear;
 mod meal;
 mod orbs;
@@ -48,6 +49,9 @@ const NUDGE_EVERY: Duration = Duration::from_millis(400);
 const SWING_REACH: f32 = MELEE_REACH * 1.5;
 /// A corpse stays this long before it is taken away.
 const CORPSE_TIME: Duration = Duration::from_secs(6);
+/// A level gained gives back this part of full health and mana, percent (and the level's own
+/// new points).
+const LEVEL_UP_RESTORE_PERCENT: u32 = 25;
 /// The player's health gain per level.
 const HEALTH_PER_LEVEL: u32 = 18;
 /// The player's weapon damage gain per level.
@@ -296,8 +300,11 @@ pub(crate) struct Game {
     /// The quest giver that spoke up last, quiet until the player walks off.
     talked: Option<u64>,
     quests: quest::QuestLog,
-    /// Copper.
+    /// Copper: the town purse, or during a run the run's own, which starts empty.
     money: u32,
+    /// During a run, the town purse left behind, and all the copper the run has picked up.
+    town_money: u32,
+    run_found: u32,
     /// What a run starts with: the class's first spells and its starting bar.
     start_spells: Vec<u32>,
     start_buttons: [u32; 120],
@@ -310,8 +317,12 @@ pub(crate) struct Game {
     /// Outside the barrier, counting down to the run.
     countdown: Option<Instant>,
     /// Souls and coins loose in the world, the last orb's id, and the last tick's time.
+    /// When the game menu stopped the world, while it is open.
+    menu_paused: Option<Instant>,
     orbs: Vec<orbs::Loose>,
     next_orb: u64,
+    /// The souls lying about the zone, made on the first tick.
+    field_souls: Vec<orbs::FieldSoul>,
     last_tick: Instant,
     /// The run's upgrade cards taken, by skill.
     upgrades: upgrade::Upgrades,
@@ -324,6 +335,8 @@ pub(crate) struct Game {
     /// said its price, and each chest's items this run.
     chests: Vec<chest::Chest>,
     chests_shown: HashSet<usize>,
+    gathers: Vec<gather::Gather>,
+    gathers_shown: HashSet<usize>,
     chest_price: u32,
     chest_asked: Option<usize>,
     chest_loot: Vec<Vec<gear::GearItem>>,
@@ -340,8 +353,13 @@ pub(crate) struct Game {
     armory_open: Option<u64>,
     armory_closed: bool,
     armory_shown: HashSet<usize>,
-    /// The starting gear's look per equipment slot, and its weapon: what a run ends back in.
-    start_visible: std::collections::HashMap<u16, u32>,
+    /// The starting gear per equipment slot (its entry and item guid), and its weapon: what a
+    /// run ends back in.
+    start_visible: std::collections::HashMap<u16, (u32, u64)>,
+    /// The item objects made for the chest gear worn, per slot, and the count their guids
+    /// are numbered from.
+    worn_items: std::collections::HashMap<u16, (u64, u32)>,
+    next_worn: u64,
     start_weapon: (f32, f32, Duration),
     run_speed: f32,
     speed_counter: u32,
@@ -446,7 +464,7 @@ impl Game {
         let start_visible = pack
             .iter()
             .filter(|p| (f::PLAYER_INV_SLOT_HEAD..f::PLAYER_INV_SLOT_HEAD + 38).contains(&p.field))
-            .map(|p| ((p.field - f::PLAYER_INV_SLOT_HEAD) / 2, p.entry))
+            .map(|p| ((p.field - f::PLAYER_INV_SLOT_HEAD) / 2, (p.entry, p.guid)))
             .collect();
         let mut game = Self {
             curve,
@@ -472,14 +490,18 @@ impl Game {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            town_money: 0,
+            run_found: 0,
             start_spells: Vec::new(),
             start_buttons: buttons,
             teleport_counter: 0,
             seeded: false,
             waves: None,
             countdown: None,
+            menu_paused: None,
             orbs: Vec::new(),
             next_orb: 0,
+            field_souls: Vec::new(),
             last_tick: now,
             upgrades: upgrade::Upgrades::default(),
             open_panel: None,
@@ -487,6 +509,8 @@ impl Game {
             gender: c.gender,
             chests: chest::chests(&data),
             chests_shown: HashSet::new(),
+            gathers: gather::gathers(&data),
+            gathers_shown: HashSet::new(),
             chest_price: 0,
             chest_asked: None,
             chest_loot: Vec::new(),
@@ -499,6 +523,8 @@ impl Game {
             armory_closed: false,
             armory_shown: HashSet::new(),
             start_visible,
+            worn_items: std::collections::HashMap::new(),
+            next_worn: 0,
             start_weapon: weapon,
             run_speed: 7.0,
             speed_counter: 0,
@@ -597,6 +623,7 @@ impl Game {
         self.take_pick_choice();
         self.take_panel_answer();
         self.take_armory_action();
+        self.pause_for_menu();
         if self.paused() {
             return;
         }
@@ -605,6 +632,8 @@ impl Game {
         self.check_barrier(now);
         self.update_visibility(now);
         self.update_chests();
+        self.update_gathers(now);
+        self.take_nearby_gather(now);
         self.update_armory_chests();
         self.open_nearby_chest(now);
         self.open_armory_nearby();
@@ -979,11 +1008,18 @@ impl Game {
             self.player.level += 1;
             self.picks_pending += 1;
             eprintln!("survivor: reached level {}", self.player.level);
+            // A level gives back a part of health and mana, not all of it.
             self.player.max_health += HEALTH_PER_LEVEL;
-            self.player.health = self.player.max_health;
+            self.player.health = (self.player.health
+                + HEALTH_PER_LEVEL
+                + self.player.max_health * LEVEL_UP_RESTORE_PERCENT / 100)
+                .min(self.player.max_health);
             if self.player.power.kind == 0 {
                 self.player.power.max += MANA_PER_LEVEL;
-                self.player.power.current = self.player.power.max;
+                self.player.power.current = (self.player.power.current
+                    + MANA_PER_LEVEL
+                    + self.player.power.max * LEVEL_UP_RESTORE_PERCENT / 100)
+                    .min(self.player.power.max);
                 fl.set(f::MAXPOWER1, self.player.power.max)
                     .set(f::POWER1, self.player.power.current);
             }
@@ -1131,6 +1167,7 @@ impl Game {
         }
         // Taking a blow builds 5 rage.
         self.gain_rage(50);
+        self.frost_armor_strikes_back(guid, now);
         self.player.health = self.player.health.saturating_sub(damage);
         let mut fl = Fields::default();
         fl.set(f::HEALTH, self.player.health);
@@ -1471,16 +1508,21 @@ impl Game {
 
         if now >= self.next_regen {
             self.next_regen = now + Duration::from_secs(1);
+            // Legs may quicken each (`gear`); rage then also comes in combat, in wire tenths.
+            let mana = 1.0 + self.gear(gear::GearStat::ManaRegen);
+            let energy = 1.0 + self.gear(gear::GearStat::EnergyRegen);
+            let rage = (self.gear(gear::GearStat::RageRegen) * gear::RAGE_REGEN_SCALE * 10.0)
+                .round() as u32;
             let p = &mut self.player.power;
             let before = p.current;
             p.current = match p.kind {
                 // Rage fades out of combat.
                 1 if now > self.player.in_combat_until => p.current.saturating_sub(20),
-                1 => p.current,
+                1 => (p.current + rage).min(p.max),
                 // Energy: 10 a second.
-                3 => (p.current + 10).min(p.max),
+                3 => (p.current + (10.0 * energy).round() as u32).min(p.max),
                 // Mana: 4% of the pool a second, a survivor's pace.
-                _ => (p.current + (p.max / 25).max(1)).min(p.max),
+                _ => (p.current + ((p.max as f32 / 25.0 * mana).round() as u32).max(1)).min(p.max),
             };
             if p.current != before {
                 self.send_power();

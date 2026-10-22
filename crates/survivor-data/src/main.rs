@@ -7,7 +7,8 @@
 //! - `start_items.tsv` and `items.tsv`: each Forsaken class's starting gear.
 //!
 //! - `npcs.tsv`: the friendly people of the safe towns (`survivor_server::town`), quest givers
-//!   among them; `quests.tsv`: their kill quests.
+//!   among them; `quests.tsv`: their kill quests, and their gather quests;
+//! - `gathers.tsv`: the things those are gathered from (Deathknell's Equipment Boxes).
 //!
 //! Friendly creatures and anything with a service outside the towns are left out, and so is
 //! every foe inside one.
@@ -322,6 +323,83 @@ fn export_chests(
     Ok(count)
 }
 
+/// `gathers.tsv`: every object in Tirisfall a quest item is looted from (a `GAMEOBJECT_TYPE_CHEST`
+/// whose loot holds a quest-only drop), towns included, with the item. Returns `item -> object`,
+/// the object with the most spawns where several give the same item.
+fn export_gathers(
+    conn: &Connection,
+    chain: &benilla_formats::Chain,
+    zones: &mut ZoneLookup,
+    areas: &benilla_formats::AreaTableCatalog,
+    out: &Path,
+) -> Result<std::collections::BTreeMap<i64, i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT g.guid, g.id, t.name, t.displayId, t.size, g.position_x, g.position_y,
+                g.position_z, g.orientation, g.rotation0, g.rotation1, g.rotation2, g.rotation3,
+                l.item
+         FROM gameobject g JOIN gameobject_template t ON t.entry = g.id
+              JOIN gameobject_loot_template l ON l.entry = t.data1
+         WHERE g.map = ?1 AND g.patch_min <= ?2 AND g.patch_max >= ?2 AND t.type = 3
+           AND l.ChanceOrQuestChance < 0 AND l.patch_min <= ?2 AND l.patch_max >= ?2
+           AND g.position_x BETWEEN ?3 AND ?4 AND g.position_y BETWEEN ?5 AND ?6
+           AND t.patch = (SELECT MAX(patch) FROM gameobject_template u
+                          WHERE u.entry = t.entry AND u.patch <= ?2)
+         ORDER BY g.guid",
+    )?;
+    let mut tsv =
+        String::from("guid	entry	name	display	size	x	y	z	o	r0	r1	r2	r3	item
+");
+    let mut spawns: std::collections::BTreeMap<(i64, i64), usize> = Default::default();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut rows = stmt.query(rusqlite::params![
+        MAP,
+        PATCH,
+        TIRISFALL_X.0,
+        TIRISFALL_X.1,
+        TIRISFALL_Y.0,
+        TIRISFALL_Y.1
+    ])?;
+    while let Some(r) = rows.next()? {
+        let (x, y, z): (f64, f64, f64) = (r.get(5)?, r.get(6)?, r.get(7)?);
+        let area = zones.area_at(chain, x as f32, y as f32);
+        if area.and_then(|a| areas.top_zone(a)) != Some(TIRISFALL_ZONE) {
+            continue;
+        }
+        let (guid, entry, item): (i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(13)?);
+        // vmangos stacks a few spawns on the same spot twice: one of them.
+        let spot = (entry, (x * 2.0).round() as i64 * 100_000 + (y * 2.0).round() as i64);
+        if !seen.insert(spot) {
+            continue;
+        }
+        *spawns.entry((item, entry)).or_default() += 1;
+        let name: String = r.get(2)?;
+        writeln!(
+            tsv,
+            "{guid}\t{entry}\t{name}\t{}\t{:.2}\t{x:.2}\t{y:.2}\t{z:.2}\t{:.3}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{item}",
+            r.get::<_, i64>(3)?,
+            r.get::<_, f64>(4)?,
+            r.get::<_, f64>(8)?,
+            r.get::<_, f64>(9)?,
+            r.get::<_, f64>(10)?,
+            r.get::<_, f64>(11)?,
+            r.get::<_, f64>(12)?,
+        )?;
+    }
+    std::fs::write(out.join("gathers.tsv"), tsv)?;
+    let mut best: std::collections::BTreeMap<i64, (usize, i64)> = Default::default();
+    for (&(item, entry), &n) in &spawns {
+        let b = best.entry(item).or_insert((0, entry));
+        if n > b.0 {
+            *b = (n, entry);
+        }
+    }
+    Ok(best.into_iter().map(|(item, (_, entry))| (item, entry)).collect())
+}
+
+/// A quest objective naming a game object rather than a creature: its entry with this bit, as
+/// `SMSG_QUEST_QUERY_RESPONSE` and `SMSG_QUESTUPDATE_ADD_KILL` carry it.
+const OBJECTIVE_GAMEOBJECT: i64 = 0x8000_0000;
+
 /// The towns' guards that walk a beat: vmangos's own patrols of Deathguard Oliver and Deathguard
 /// Phillip through Deathknell (`creature_movement_template`). Each gets a Deathguard Elite at
 /// their side.
@@ -424,14 +502,21 @@ impl Heights {
 }
 
 /// `quests.tsv`: the kill-only quests the towns' people give, for the Forsaken, of a level the
-/// zone's creatures suit, whose every target is spawned. A prerequisite outside the set is
-/// dropped, so a chain starts wherever its first kill quest is. Text keeps WoW's `$B` breaks.
+/// zone's creatures suit, whose every target is spawned; and the gather-only ones whose every
+/// item comes from an object in `gathers` (`item -> object`), written as objectives to use that
+/// object, the item's name their text. A prerequisite outside the set is dropped, so a chain
+/// starts wherever its first quest is. Text keeps WoW's `$B` breaks.
 fn export_quests(
     conn: &Connection,
     out: &Path,
     givers: &std::collections::BTreeSet<i64>,
     spawned: &std::collections::BTreeSet<i64>,
+    gathers: &std::collections::BTreeMap<i64, i64>,
 ) -> Result<usize> {
+    let mut item_name = conn.prepare(
+        "SELECT name FROM item_template WHERE entry = ?1 AND patch <= ?2
+         ORDER BY patch DESC LIMIT 1",
+    )?;
     let mut stmt = conn.prepare(
         "SELECT q.entry, q.QuestLevel, q.MinLevel, q.PrevQuestId, q.RewXP, q.RewOrReqMoney,
                 q.Title, q.Details, q.Objectives, q.OfferRewardText, q.EndText,
@@ -441,7 +526,8 @@ fn export_quests(
                 q.ObjectiveText2, q.ObjectiveText3, q.ObjectiveText4, q.RequiredRaces,
                 q.ReqItemId1, q.ReqItemId2, q.ReqItemId3, q.ReqItemId4, q.RequiredClasses, r.id,
                 (SELECT e.id FROM creature_involvedrelation e
-                  WHERE e.quest = q.entry AND e.patch_min <= ?1 AND e.patch_max >= ?1 LIMIT 1)
+                  WHERE e.quest = q.entry AND e.patch_min <= ?1 AND e.patch_max >= ?1 LIMIT 1),
+                q.ReqItemCount1, q.ReqItemCount2, q.ReqItemCount3, q.ReqItemCount4
          FROM quest_template q JOIN creature_questrelation r ON r.quest = q.entry
          WHERE r.patch_min <= ?1 AND r.patch_max >= ?1
            AND q.patch = (SELECT MAX(patch) FROM quest_template u
@@ -468,13 +554,39 @@ fn export_quests(
         let items: [i64; 4] = [r.get(24)?, r.get(25)?, r.get(26)?, r.get(27)?];
         let classes: i64 = r.get(28)?;
         let giver: i64 = r.get(29)?;
-        let targets: [i64; 4] = [r.get(11)?, r.get(12)?, r.get(13)?, r.get(14)?];
-        let counts: [i64; 4] = [r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?];
+        let mut targets: [i64; 4] = [r.get(11)?, r.get(12)?, r.get(13)?, r.get(14)?];
+        let mut counts: [i64; 4] = [r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?];
+        let mut texts: [String; 4] = [
+            text(r.get(19)?),
+            text(r.get(20)?),
+            text(r.get(21)?),
+            text(r.get(22)?),
+        ];
         let kill_only = items.iter().all(|&i| i == 0) && targets[0] > 0;
-        let all_spawned = targets.iter().all(|&t| t == 0 || spawned.contains(&t));
+        let gather_only = targets.iter().all(|&t| t == 0)
+            && items[0] > 0
+            && items.iter().all(|&i| i == 0 || gathers.contains_key(&i));
+        if gather_only {
+            let item_counts: [i64; 4] = [r.get(31)?, r.get(32)?, r.get(33)?, r.get(34)?];
+            for k in 0..4 {
+                if items[k] == 0 {
+                    continue;
+                }
+                targets[k] = gathers[&items[k]] | OBJECTIVE_GAMEOBJECT;
+                counts[k] = item_counts[k];
+                if texts[k].is_empty() {
+                    texts[k] = item_name
+                        .query_row(rusqlite::params![items[k], PATCH], |r| r.get(0))
+                        .unwrap_or_default();
+                }
+            }
+        }
+        let all_spawned = targets
+            .iter()
+            .all(|&t| t == 0 || t & OBJECTIVE_GAMEOBJECT != 0 || spawned.contains(&t));
         let for_us = (races == 0 || races & (1 << (UNDEAD - 1)) != 0) && classes == 0;
         if !givers.contains(&giver)
-            || !kill_only
+            || !(kill_only || gather_only)
             || !all_spawned
             || !for_us
             || level > MAX_LEVEL
@@ -500,9 +612,7 @@ fn export_quests(
         for k in 0..4 {
             cols.push(format!("{},{}", targets[k].max(0), counts[k].max(0)));
         }
-        for c in 19..=22 {
-            cols.push(text(r.get(c)?));
-        }
+        cols.extend(texts);
         kept.push(Row {
             id,
             cols,
@@ -774,7 +884,8 @@ fn main() -> Result<()> {
         npcs_used.insert(DEATHGUARD_ELITE);
     }
     std::fs::write(out.join("npcs.tsv"), &npcs)?;
-    let quests = export_quests(&conn, out, &npcs_used, &used)?;
+    let gathers = export_gathers(&conn, &chain, &mut zones, &areas, out)?;
+    let quests = export_quests(&conn, out, &npcs_used, &used, &gathers)?;
 
     let mut creatures = String::from(
         "entry\tname\tlevel_min\tlevel_max\tfaction\tdisplay\tscale\twalk\trun\trank\ttype\t\

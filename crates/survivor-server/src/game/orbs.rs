@@ -2,6 +2,10 @@
 //! (coins: copper, silver and gold pieces, single or worth 5 or 25, the fewest that make it). Both pop out of the corpse, then come back to the player: slowly from afar, fast
 //! once inside the pickup range (which hands' gear widens). Reaching the player, the soul's
 //! experience and the coin's gold are theirs. The screen draws them from [`crate::orbs`].
+//!
+//! Souls also lie about the zone outside the towns, one beside every few creatures' homes,
+//! worth a part of a kill at the player's level. One taken comes back to its spot a few minutes
+//! later.
 
 use std::time::{Duration, Instant};
 
@@ -22,6 +26,21 @@ const FLOAT: f32 = 1.0;
 const COINS: [u32; 9] = [250_000, 50_000, 10_000, 2_500, 500, 100, 25, 5, 1];
 /// Coins fall scattered this far round the corpse.
 const SCATTER: f32 = 0.9;
+/// A field soul lies beside every this many creature homes, this far from it; it is worth
+/// this part of a kill, comes back this long after it was taken, and shows within this range.
+const FIELD_EVERY: usize = 3;
+const FIELD_OFFSET: f32 = 2.5;
+const FIELD_WORTH: f32 = 0.25;
+const FIELD_BACK: Duration = Duration::from_secs(180);
+const FIELD_SHOW: f32 = 80.0;
+
+/// A soul lying in the zone.
+pub(crate) struct FieldSoul {
+    id: u64,
+    pos: [f32; 3],
+    /// Taken: when it comes back.
+    back: Option<Instant>,
+}
 
 /// An orb in the world.
 pub(crate) struct Loose {
@@ -61,15 +80,70 @@ impl Game {
         }
     }
 
-    /// The orbs move toward the player; those that reach them are taken.
+    /// The zone's souls, beside every [`FIELD_EVERY`]th creature home outside the towns.
+    fn lay_field_souls(&mut self) {
+        let spots: Vec<[f32; 3]> = self
+            .data
+            .spawns
+            .iter()
+            .filter(|s| crate::town::town_at(s.pos).is_none())
+            .step_by(FIELD_EVERY)
+            .map(|s| {
+                // Off to a side of the home that differs from one to the next.
+                let a = (s.guid as f32 * 2.4).rem_euclid(std::f32::consts::TAU);
+                [
+                    s.pos[0] + FIELD_OFFSET * a.cos(),
+                    s.pos[1] + FIELD_OFFSET * a.sin(),
+                    s.pos[2] + FLOAT,
+                ]
+            })
+            .collect();
+        for pos in spots {
+            self.next_orb += 1;
+            self.field_souls.push(FieldSoul {
+                id: self.next_orb,
+                pos,
+                back: None,
+            });
+        }
+        eprintln!("survivor: {} souls lie about the zone", self.field_souls.len());
+    }
+
+    /// The orbs move toward the player; those that reach them are taken. Field souls in the
+    /// pickup range start toward the player like a kill's.
     pub(super) fn tick_orbs(&mut self, now: Instant, dt: f32) {
-        if self.orbs.is_empty() {
-            crate::orbs::set(Vec::new());
-            return;
+        if self.field_souls.is_empty() && !self.data.spawns.is_empty() {
+            self.lay_field_souls();
         }
         let me = self.player.pos;
         let range = PICKUP * (1.0 + self.gear(super::gear::GearStat::Pickup));
         let alive = self.player.dead_until.is_none();
+        for s in &mut self.field_souls {
+            if s.back.is_some_and(|t| now >= t) {
+                s.back = None;
+            }
+        }
+        if alive && self.in_run() {
+            let worth = (super::kill_xp(self.player.level) as f32
+                * FIELD_WORTH
+                * (1.0 + self.gear(super::gear::GearStat::Experience)))
+            .max(1.0) as u32;
+            for s in &mut self.field_souls {
+                if s.back.is_none()
+                    && super::dist2d(s.pos, me) <= range
+                    && (s.pos[2] - me[2]).abs() < range
+                {
+                    s.back = Some(now + FIELD_BACK);
+                    self.orbs.push(Loose {
+                        id: s.id,
+                        kind: Kind::Soul,
+                        amount: worth,
+                        pos: s.pos,
+                        born: now - POP,
+                    });
+                }
+            }
+        }
         let mut taken = Vec::new();
         for o in &mut self.orbs {
             if !alive || now < o.born + POP {
@@ -95,6 +169,16 @@ impl Game {
                 Kind::Coin => self.add_money(amount),
             }
         }
+        let lying = self
+            .field_souls
+            .iter()
+            .filter(|s| s.back.is_none() && super::dist2d(s.pos, me) <= FIELD_SHOW)
+            .map(|s| Orb {
+                id: s.id,
+                kind: Kind::Soul,
+                pos: s.pos,
+                amount: 0,
+            });
         crate::orbs::set(
             self.orbs
                 .iter()
@@ -104,6 +188,7 @@ impl Game {
                     pos: o.pos,
                     amount: o.amount,
                 })
+                .chain(lying)
                 .collect(),
         );
     }
@@ -118,7 +203,9 @@ impl Game {
             .sum();
         self.orbs.clear();
         crate::orbs::set(Vec::new());
+        // Called once the player is back in town: the coins count toward what the run found.
         if !died && coins > 0 {
+            self.run_found += coins;
             self.add_money(coins);
         }
     }

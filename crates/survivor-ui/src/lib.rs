@@ -25,6 +25,8 @@ mod barrier;
 mod ground;
 mod roads;
 mod countdown;
+mod menu_pause;
+mod mob_bars;
 mod run_clock;
 mod quest_frame;
 mod quest_panel;
@@ -51,7 +53,7 @@ impl Plugin for SurvivorUiPlugin {
             .add_systems(Update, (show_offer, take_card, hover_cards).chain())
             .add_systems(Update, follow_aim)
             .add_systems(Update, preload_library)
-            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, run_clock::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin, armory::plugin, orbs::plugin, trails::plugin))
+            .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, run_clock::plugin, mob_bars::plugin, menu_pause::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin, armory::plugin, orbs::plugin, trails::plugin))
             .add_systems(Update, shrink_cards);
     }
 }
@@ -527,6 +529,29 @@ fn spawn_screen(
                     spawn_card(row, library, images, offer.id, i, card, vh);
                 }
             });
+            // A chest's way out: none of its things, a part of its price back.
+            if let Some(words) = &offer.recycle {
+                root.spawn((
+                    CardButton {
+                        offer: offer.id,
+                        index: offer.cards.len(),
+                        rarity: 0,
+                    },
+                    Button,
+                    Node {
+                        margin: UiRect::top(Val::Vh(2.0)),
+                        padding: UiRect::axes(Val::Vh(3.0), Val::Vh(1.2)),
+                        border: UiRect::all(Val::Vh(0.3)),
+                        border_radius: BorderRadius::all(Val::Vh(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(card_bg(0, false)),
+                    BorderColor::all(CARD_EDGE),
+                ))
+                .with_children(|b| {
+                    b.spawn(text(font, format!("{words}   [ R ]"), 3.6 * vh, GOLD));
+                });
+            }
         })
         .id()
 }
@@ -661,7 +686,11 @@ fn take_card(
         [KeyCode::Digit2, KeyCode::Numpad2],
         [KeyCode::Digit3, KeyCode::Numpad3],
     ];
-    let pressed_key = KEYS.iter().position(|k| keys.any_just_pressed(*k));
+    // R is the recycle button's, placed after the cards.
+    let pressed_key = KEYS.iter().position(|k| keys.any_just_pressed(*k)).or_else(|| {
+        let recycle = picks::offer().and_then(|o| o.recycle.map(|_| o.cards.len()));
+        recycle.filter(|_| keys.just_pressed(KeyCode::KeyR))
+    });
     // By each card's own index: a query's order is not the order on screen.
     let picked = cards
         .iter()

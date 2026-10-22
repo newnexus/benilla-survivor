@@ -29,17 +29,25 @@ pub(crate) struct Pick {
     /// A chest's items, by card; a chest's pick is one card and back to the world.
     items: Vec<Option<super::gear::GearItem>>,
     chest: bool,
+    /// A chest's copper back when it is recycled instead.
+    refund: u32,
 }
 
 impl Pick {
     /// A chest's offer of `loot`.
-    pub(super) fn chest(id: u64, paused_at: Instant, loot: Vec<super::gear::GearItem>) -> Self {
+    pub(super) fn chest(
+        id: u64,
+        paused_at: Instant,
+        loot: Vec<super::gear::GearItem>,
+        refund: u32,
+    ) -> Self {
         Self {
             id,
             paused_at,
             boosts: Vec::new(),
             items: loot.into_iter().map(Some).collect(),
             chest: true,
+            refund,
         }
     }
 }
@@ -49,7 +57,23 @@ const BOOST_SHARE: f32 = 0.5;
 
 impl Game {
     pub(crate) fn paused(&self) -> bool {
-        self.pick.is_some()
+        self.pick.is_some() || self.menu_paused.is_some()
+    }
+
+    /// The game menu opening stops the world as a pick does; closing it lets it run on.
+    pub(super) fn pause_for_menu(&mut self) {
+        let open = crate::menu_pause::open();
+        if open && self.menu_paused.is_none() && self.pick.is_none() {
+            let now = Instant::now();
+            eprintln!("survivor: paused for the game menu");
+            self.menu_paused = Some(now);
+            self.freeze(now);
+        } else if !open {
+            if let Some(at) = self.menu_paused.take() {
+                eprintln!("survivor: game menu closed, the world runs on");
+                self.thaw(at, Instant::now());
+            }
+        }
     }
 
     /// The spell's rank chain (its rank 1) and rank, from the class's trainer rows; a spell no
@@ -192,7 +216,7 @@ impl Game {
             replaces: None,
             defensive: self.kind(spell) == SpellKind::Defensive,
             rarity: b.rarity,
-            boost: b.lines(),
+            boost: b.lines(self.heals_any(spell)),
             item: None,
         }
     }
@@ -205,7 +229,19 @@ impl Game {
         if !self.pick.as_ref().is_some_and(|p| p.id == id) {
             return;
         }
-        let Some(card) = picks::offer().and_then(|o| o.cards.get(index).cloned()) else {
+        let Some(offer) = picks::offer() else { return };
+        // A chest recycled: none of its things, a part of its price back.
+        if index == offer.cards.len() && offer.recycle.is_some() {
+            let refund = self.pick.as_ref().map_or(0, |p| p.refund);
+            eprintln!("survivor: chest recycled for {refund} copper");
+            if refund > 0 {
+                self.add_money(refund);
+            }
+            picks::clear();
+            self.resume(Instant::now());
+            return;
+        }
+        let Some(card) = offer.cards.get(index).cloned() else {
             return;
         };
         if self.pick.as_ref().is_some_and(|p| p.chest) {
@@ -254,6 +290,7 @@ impl Game {
             boosts,
             items: Vec::new(),
             chest: false,
+            refund: 0,
         });
         self.freeze(now);
     }
@@ -333,7 +370,12 @@ impl Game {
     /// creatures walking home set off again.
     pub(super) fn resume(&mut self, now: Instant) {
         let Some(pick) = self.pick.take() else { return };
-        self.shift_timers(now.saturating_duration_since(pick.paused_at));
+        self.thaw(pick.paused_at, now);
+    }
+
+    /// The world stopped at `paused_at` runs on from `now`.
+    fn thaw(&mut self, paused_at: Instant, now: Instant) {
+        self.shift_timers(now.saturating_duration_since(paused_at));
         // The client's buff timers ran on through the pause.
         self.send_auras(now);
         self.root_counter += 1;

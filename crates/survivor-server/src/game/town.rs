@@ -32,6 +32,8 @@ const META_XP: [u32; 29] = [
 ];
 /// Stepping out through the barrier counts down this long before the run starts; stepping back
 /// in calls it off.
+/// The part of a run's picked-up copper that comes home with a living player, percent.
+const BROUGHT_HOME_PERCENT: u32 = 10;
 const COUNTDOWN: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// The meta level's cap, for now.
@@ -219,6 +221,15 @@ impl Game {
         self.mode = Mode::Run;
         self.waves = Some(self.new_waves(now));
         self.reset_chests();
+        // The run's purse starts empty; the town's waits for its return.
+        self.town_money = self.money;
+        // `$SURVIVOR_MONEY=<copper>` fills the run's purse too, for trying the chests.
+        self.money = std::env::var("SURVIVOR_MONEY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        self.run_found = 0;
+        self.send_money();
         self.player.level = 1;
         self.player.xp = 0;
         self.reset_character(self.curve.next_level(1));
@@ -234,6 +245,13 @@ impl Game {
         self.waves = None;
         self.clear_spawned(now);
         self.end_orbs(died);
+        // Back alive, a part of all the copper the run picked up joins the town purse.
+        let brought = if died { 0 } else { self.run_found * BROUGHT_HOME_PERCENT / 100 };
+        let found = self.run_found;
+        self.money = self.town_money + brought;
+        self.town_money = 0;
+        self.run_found = 0;
+        self.send_money();
         self.end_run_gear(died);
         self.publish_chest_glow();
         // An open level-up pick goes with the run.
@@ -258,7 +276,11 @@ impl Game {
         let line = if died {
             format!("You fell at level {reached}. Safe in {name}.")
         } else {
-            format!("Safe in {name}. The run ended at level {reached}.")
+            format!(
+                "Safe in {name}. The run ended at level {reached}. Brought home {} of {} found.",
+                super::chest::money_text(brought),
+                super::chest::money_text(found)
+            )
         };
         self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
     }

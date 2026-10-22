@@ -47,6 +47,9 @@ pub struct Offer {
     pub cards: Vec<Card>,
     /// The screen's heading when it is not a level-up ("Battered Chest").
     pub title: Option<String>,
+    /// A chest's way out when no card suits: the button's words ("Recycle: 10c back"). Taking
+    /// it answers with the index one past the last card.
+    pub recycle: Option<String>,
 }
 
 struct Board {
@@ -77,11 +80,17 @@ pub fn choose(id: u64, index: usize) {
 
 /// Show `cards` for `level`; the offer's id comes back.
 pub(crate) fn post(level: u32, cards: Vec<Card>) -> u64 {
-    post_titled(level, cards, None)
+    post_titled(level, cards, None, None)
 }
 
-/// Show `cards` under `title` (a chest's name), or as a level-up.
-pub(crate) fn post_titled(level: u32, cards: Vec<Card>, title: Option<String>) -> u64 {
+/// Show `cards` under `title` (a chest's name), or as a level-up, with a chest's `recycle`
+/// button.
+pub(crate) fn post_titled(
+    level: u32,
+    cards: Vec<Card>,
+    title: Option<String>,
+    recycle: Option<String>,
+) -> u64 {
     let mut b = board();
     let id = b.next_id;
     b.next_id += 1;
@@ -90,6 +99,7 @@ pub(crate) fn post_titled(level: u32, cards: Vec<Card>, title: Option<String>) -
         level,
         cards,
         title,
+        recycle,
     });
     b.choice = None;
     id

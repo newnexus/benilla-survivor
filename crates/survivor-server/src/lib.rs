@@ -93,6 +93,21 @@ pub mod orbs {
     }
 }
 
+/// The screen's game menu (Escape) is open: the world stands still until it closes.
+pub mod menu_pause {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static OPEN: AtomicBool = AtomicBool::new(false);
+
+    pub fn set(open: bool) {
+        OPEN.store(open, Ordering::Relaxed);
+    }
+
+    pub(crate) fn open() -> bool {
+        OPEN.load(Ordering::Relaxed)
+    }
+}
+
 /// The player's purse, copper, for the screen's corner.
 pub mod purse {
     use std::sync::atomic::{AtomicU32, Ordering};

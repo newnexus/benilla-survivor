@@ -15,5 +15,6 @@ benilla-app = { path = "../benilla-app", default-features = false }
 benilla-assets = { path = "../benilla-assets", default-features = false }
 benilla-adt = { path = "../benilla-adt" }
 benilla-formats = { path = "../benilla-formats" }
+benilla-world = { path = "../benilla-world", default-features = false }
 bevy.workspace = true
 survivor-server = { path = "../survivor-server" }

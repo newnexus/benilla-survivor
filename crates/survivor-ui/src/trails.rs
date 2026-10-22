@@ -2,7 +2,10 @@
 //! of that town with something for them ([`survivor_server::trails`]): footprints of the
 //! barrier's golden flame (`shaders/footstep.wgsl`), with a short ring of the barrier's tongues
 //! rising round each, tallest at the toe (`shaders/footflame.wgsl`). The steps keep to the roads
-//! ([`crate::roads`]) and lie on the terrain, and a glow walks along them toward the giver.
+//! ([`crate::roads`]) and lie on the terrain. Every few seconds an unseen walker sets out from
+//! the player: its steps appear a pair at a time toward the giver, and each burns out a while after
+//! it appeared, in the order they came. Stepping on one puts it out with every step of that
+//! walker before it.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -25,18 +28,20 @@ const LIFT: f32 = 0.04;
 /// No step this close to the player or the giver.
 const CLEAR_START: f32 = 1.2;
 const CLEAR_END: f32 = 1.5;
-/// The glow walks this many yards a second, one every this many yards, lighting this long a
-/// stretch behind it.
-const FLOW: f32 = 6.0;
-const PULSE: f32 = 16.0;
-const TAIL: f32 = 7.0;
-/// A step's strength between glows, and how the steps thin out near both ends.
-const DIM: f32 = 0.35;
+/// A walker sets out every this many seconds, and lays a pair of steps every this many.
+const EVERY: f32 = 6.0;
+const PAIR_GAP: f32 = 0.4;
+/// A step burns this long, growing in over the first part and dying over the last.
+const LIFE: f32 = 3.0;
+const GROW: f32 = 0.15;
+const DIE: f32 = 1.0;
+/// Stepping within this many yards of a step puts it out, over this many seconds.
+const TOUCH: f32 = 0.7;
+const EATEN: f32 = 0.25;
+/// How the steps thin out near both ends.
 const FADE: f32 = 2.5;
 /// Strengths the steps are drawn at: one material each.
 const LEVELS: usize = 8;
-/// The way is found again once the player has moved this far.
-const REPLAN: f32 = 0.75;
 /// The flame ring round a footprint: its radii as parts of the print's, its height, how many
 /// tongues round it, and the points it is drawn through.
 const RING_ACROSS: f32 = 0.42;
@@ -108,22 +113,51 @@ struct StepLook {
 struct Planner {
     ground: Option<Ground>,
     roads: Vec<Option<Roads>>,
-    /// What the steps were laid for: the player's spot and the givers.
-    from: Option<[f32; 2]>,
+    /// The givers the walkers are headed for.
     ends: Vec<[f32; 3]>,
 }
 
-/// The steps laid out, in world space.
+/// The walkers out, oldest first.
 #[derive(Resource, Default)]
-struct Steps(Vec<Step>);
+struct Walkers(Vec<Walker>);
+
+struct Walker {
+    /// When it set out (`Time::elapsed_secs`).
+    born: f32,
+    steps: Vec<Step>,
+}
 
 struct Step {
     at: Vec3,
     turn: Quat,
     left: bool,
-    /// Yards from the player along its way, and how far from the way's nearer end.
+    /// Where it lies on the map (WoW x, y).
+    spot: [f32; 2],
+    /// Yards from the walker's start along its way, and how far from the way's nearer end.
     along: f32,
     edge: f32,
+    /// When the player stepped on it or past it.
+    eaten: Option<f32>,
+}
+
+impl Step {
+    /// Seconds after its walker set out that it appears: its pair's turn.
+    fn appears(&self) -> f32 {
+        let pair = ((self.along - CLEAR_START) / STRIDE).round() as u32 / 2;
+        pair as f32 * PAIR_GAP
+    }
+
+    /// How strongly it burns `age` seconds after its walker set out, 0 when not shown.
+    fn strength(&self, age: f32, now: f32) -> f32 {
+        let age = age - self.appears();
+        if !(0.0..LIFE).contains(&age) {
+            return 0.0;
+        }
+        let life = (age / GROW).min(1.0) * ((LIFE - age) / DIE).min(1.0);
+        let eaten = self.eaten.map_or(1.0, |t| (1.0 - (now - t) / EATEN).max(0.0));
+        let fade = (self.edge / FADE).clamp(0.0, 1.0);
+        life * eaten * (0.25 + 0.75 * fade)
+    }
 }
 
 #[derive(Component)]
@@ -155,7 +189,7 @@ fn setup(
     world: &mut World,
 ) {
     world.insert_non_send_resource(Planner::default());
-    world.init_resource::<Steps>();
+    world.init_resource::<Walkers>();
     let image = world.resource_mut::<Assets<Image>>().add(footprint_image());
     let mut meshes = world.resource_mut::<Assets<Mesh>>();
     let (mesh, ring) = (meshes.add(footprint_mesh()), meshes.add(ring_mesh()));
@@ -302,10 +336,12 @@ fn footprint_mesh() -> Mesh {
         .with_inserted_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]))
 }
 
-/// Lay the steps out again when the player has moved or the givers have changed.
+/// Send a walker out from the player every [`EVERY`] seconds (at once when the givers change),
+/// let the old ones go once burnt out, and put out the steps the player treads on.
 fn plan(
     mut planner: NonSendMut<Planner>,
-    mut steps: ResMut<Steps>,
+    mut walkers: ResMut<Walkers>,
+    time: Res<Time>,
     objects: benilla_app::Objects,
     transforms: Query<&GlobalTransform, Without<Footprint>>,
 ) {
@@ -314,34 +350,54 @@ fn plan(
         .player()
         .and_then(|p| transforms.get(p).ok())
         .map(|t| benilla_assets::coords::bevy_to_wow(t.translation()));
-    let (Some(from), false) = (from, ends.is_empty()) else {
-        planner.from = None;
-        steps.0.clear();
+    let town = from.and_then(town_at);
+    let (Some(from), Some(town), false) = (from, town, ends.is_empty()) else {
+        planner.ends.clear();
+        walkers.0.clear();
         return;
     };
+    if planner.ends != ends {
+        planner.ends = ends.clone();
+        walkers.0.clear();
+    }
+    let now = time.elapsed_secs();
     let start = [from[0], from[1]];
-    let moved = planner
-        .from
-        .is_none_or(|p| (p[0] - start[0]).hypot(p[1] - start[1]) > REPLAN);
-    if !moved && planner.ends == ends {
+    walkers.0.retain(|w| {
+        w.steps
+            .iter()
+            .any(|s| w.born + s.appears() + LIFE > now && s.eaten.is_none_or(|t| now - t < EATEN))
+    });
+    // Treading on a shown step puts it out, and every step of that walker before it.
+    for w in &mut walkers.0 {
+        let age = now - w.born;
+        let reached = w
+            .steps
+            .iter()
+            .filter(|s| s.eaten.is_none() && age >= s.appears() && dist(s.spot, start) < TOUCH)
+            .map(|s| s.along)
+            .reduce(f32::max);
+        if let Some(reached) = reached {
+            for s in &mut w.steps {
+                if s.eaten.is_none() && s.along <= reached {
+                    s.eaten = Some(now);
+                }
+            }
+        }
+    }
+    if walkers.0.last().is_some_and(|w| now - w.born < EVERY) {
         return;
     }
-    let Some(town) = town_at(from) else {
-        steps.0.clear();
-        return;
-    };
     let planner = &mut *planner;
-    planner.from = Some(start);
-    planner.ends = ends.clone();
     let ground = planner.ground.get_or_insert_with(Ground::open);
     planner.roads.resize_with(TOWNS.len(), || None);
     let roads = planner.roads[town].get_or_insert_with(|| Roads::of(&TOWNS[town], ground));
     let ways = roads.search(start);
-    steps.0.clear();
-    for end in ends {
+    let mut steps = Vec::new();
+    for end in &ends {
         let way = roads.way(&ways, start, [end[0], end[1]]);
-        lay(&way, ground, &mut steps.0);
+        lay(&way, ground, &mut steps);
     }
+    walkers.0.push(Walker { born: now, steps });
 }
 
 /// Steps along `way`, left foot first, skipping any already laid there by an earlier way (two
@@ -373,10 +429,7 @@ fn lay(way: &[[f32; 2]], ground: &mut Ground, steps: &mut Vec<Step>) {
             a[1] + (b[1] - a[1]) * t + dir[0] * side,
         ];
         k += 1;
-        let laid = steps[..first].iter().any(|s| {
-            let w = benilla_assets::coords::bevy_to_wow(s.at);
-            dist([w[0], w[1]], p) < STRIDE * 0.5
-        });
+        let laid = steps[..first].iter().any(|s| dist(s.spot, p) < STRIDE * 0.5);
         if laid {
             continue;
         }
@@ -385,6 +438,7 @@ fn lay(way: &[[f32; 2]], ground: &mut Ground, steps: &mut Vec<Step>) {
         };
         steps.push(Step {
             left,
+            spot: p,
             along,
             edge: (along - CLEAR_START).min(total - CLEAR_END - along),
             ..step
@@ -411,8 +465,10 @@ fn place(p: [f32; 2], dir: [f32; 2], ground: &mut Ground) -> Option<Step> {
         at: at + up * LIFT,
         turn,
         left: true,
+        spot: p,
         along: 0.0,
         edge: 0.0,
+        eaten: None,
     })
 }
 
@@ -420,13 +476,12 @@ fn dist(a: [f32; 2], b: [f32; 2]) -> f32 {
     (b[0] - a[0]).hypot(b[1] - a[1])
 }
 
-/// Draw the steps every frame from a pool of footprints, the glow walking along them; spare
-/// footprints hidden.
+/// Draw the steps burning now from a pool of footprints; spare footprints hidden.
 fn draw(
     mut commands: Commands,
     look: Option<Res<StepLook>>,
     time: Res<Time>,
-    steps: Res<Steps>,
+    walkers: Res<Walkers>,
     mut prints: Query<
         (
             &mut Transform,
@@ -439,8 +494,16 @@ fn draw(
     mut rings: Query<&mut MeshMaterial3d<TongueMaterial>, With<Ring>>,
 ) {
     let Some(look) = look else { return };
+    let now = time.elapsed_secs();
+    let mut shown = walkers.0.iter().flat_map(|w| {
+        w.steps.iter().filter_map(move |s| {
+            let strength = s.strength(now - w.born, now);
+            (strength > 0.0).then_some((s, strength))
+        })
+    });
+    let count = shown.clone().count();
     let have = prints.iter().count();
-    for _ in have..steps.0.len() {
+    for _ in have..count {
         commands
             .spawn((
                 Footprint,
@@ -456,18 +519,11 @@ fn draw(
                 Transform::default(),
             ));
     }
-    let head = time.elapsed_secs() * FLOW;
-    let mut it = steps.0.iter();
     for (mut tf, mut vis, mut material, children) in &mut prints {
-        let Some(s) = it.next() else {
+        let Some((s, strength)) = shown.next() else {
             vis.set_if_neq(Visibility::Hidden);
             continue;
         };
-        // How far behind the nearest glow ahead of it this step is.
-        let behind = (head - s.along).rem_euclid(PULSE);
-        let glow = (1.0 - behind / TAIL).max(0.0);
-        let fade = (s.edge / FADE).clamp(0.0, 1.0);
-        let strength = (DIM + (1.0 - DIM) * glow) * (0.25 + 0.75 * fade);
         let level = ((strength * LEVELS as f32).ceil() as usize).clamp(1, LEVELS) - 1;
         if material.0 != look.materials[level] {
             material.0 = look.materials[level].clone();

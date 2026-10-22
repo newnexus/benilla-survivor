@@ -154,7 +154,8 @@ impl Game {
         Duration::from_millis(u64::from(s.recovery_ms.max(own)))
     }
 
-    fn heals(&self, spell: u32) -> (bool, bool) {
+    /// Whether `spell` heals: at once, and over time.
+    pub(super) fn heals(&self, spell: u32) -> (bool, bool) {
         self.spell(spell).map_or((false, false), |s| {
             (
                 s.effects.contains(&EFFECT_HEAL),

@@ -34,6 +34,8 @@ pub(crate) fn plugin(app: &mut App) {
 
 fn watch_buttons(mut frames: ResMut<benilla_app::SurvivorFrames>) {
     frames.watch.extend((0..12).map(button_name));
+    // Not a button: the Escape menu, whose showing pauses the world (`crate::menu_pause`).
+    frames.watch.push(crate::menu_pause::FRAME.to_owned());
 }
 
 /// The step on screen.

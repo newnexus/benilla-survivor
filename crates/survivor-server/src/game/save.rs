@@ -30,7 +30,7 @@ impl Game {
         let Some(path) = path(&self.name) else { return };
         let mut s = String::new();
         let _ = writeln!(s, "meta {} {}", self.meta.level, self.meta.xp);
-        let _ = writeln!(s, "money {}", self.money);
+        let _ = writeln!(s, "money {}", self.banked_money());
         let done: Vec<String> = self.quests_done().iter().map(u32::to_string).collect();
         let _ = writeln!(s, "done {}", done.join(","));
         for o in &self.collection {

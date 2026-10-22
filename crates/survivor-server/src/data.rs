@@ -141,9 +141,24 @@ pub(crate) struct SpellInfo {
 const FACTION_MONSTER: u32 = 14;
 
 /// A survivor's quests want many more kills than 1.12's: this many times, up to what the quest
-/// log's 6-bit counter can show. (Gather quests, when they come, are to want only twice as many.)
+/// log's 6-bit counter can show. Gather quests want only this many times as many.
 const QUEST_KILLS_TIMES: u32 = 6;
+const QUEST_GATHER_TIMES: u32 = 2;
 const QUEST_KILLS_MAX: u32 = 60;
+
+/// A quest objective naming a game object rather than a creature: its entry with this bit, as
+/// `SMSG_QUEST_QUERY_RESPONSE` and `SMSG_QUESTUPDATE_ADD_KILL` carry it (`quests.tsv` too).
+pub(crate) const OBJECTIVE_GAMEOBJECT: u32 = 0x8000_0000;
+
+/// How many a survivor's quest wants of `target`, where 1.12's wanted `count`.
+fn survivor_count(target: u32, count: u32) -> u32 {
+    let times = if target & OBJECTIVE_GAMEOBJECT != 0 {
+        QUEST_GATHER_TIMES
+    } else {
+        QUEST_KILLS_TIMES
+    };
+    (count * times).min(QUEST_KILLS_MAX)
+}
 
 /// `UNIT_NPC_FLAG_QUESTGIVER`.
 pub(crate) const NPC_QUESTGIVER: u32 = 0x2;
@@ -195,6 +210,8 @@ pub(crate) struct WorldData {
     /// The waypoint paths creatures walk while idle, by spawn guid.
     pub(crate) mob_paths: HashMap<u32, Vec<PatrolPoint>>,
     pub(crate) chests: Vec<ChestSpawn>,
+    /// The objects the gather quests want (`gathers.tsv`), their templates in `chest_templates`.
+    pub(crate) gathers: Vec<ChestSpawn>,
     pub(crate) chest_templates: HashMap<u32, ChestTemplate>,
     /// Chest gear (`gear.tsv`): `(item, level to wear it)`, the templates in `items`.
     pub(crate) gear: Vec<(u32, u32)>,
@@ -368,9 +385,9 @@ impl WorldData {
             // The objective sentence names 1.12's counts: it names the survivor's instead.
             let mut objectives = text(10);
             for k in 0..4 {
-                let (_, count): (u32, u32) = pair(r.get(13 + k));
+                let (target, count): (u32, u32) = pair(r.get(13 + k));
                 if count > 0 {
-                    let more = (count * QUEST_KILLS_TIMES).min(QUEST_KILLS_MAX);
+                    let more = survivor_count(target, count);
                     objectives = objectives.replace(&format!(" {count} "), &format!(" {more} "));
                 }
             }
@@ -390,9 +407,32 @@ impl WorldData {
                 end_text: text(12),
                 kills: std::array::from_fn(|k| {
                     let (entry, count): (u32, u32) = pair(r.get(13 + k));
-                    (entry, (count * QUEST_KILLS_TIMES).min(QUEST_KILLS_MAX))
+                    (entry, survivor_count(entry, count))
                 }),
                 objective_texts: std::array::from_fn(|k| text(17 + k)),
+            });
+        }
+        // Only the objects a quest wants.
+        for r in rows(&dir, "gathers.tsv") {
+            let entry: u32 = num(r.get(1));
+            let wanted = d
+                .quests
+                .iter()
+                .any(|q| q.kills.iter().any(|&(e, _)| e == entry | OBJECTIVE_GAMEOBJECT));
+            if !wanted {
+                continue;
+            }
+            d.chest_templates.entry(entry).or_insert_with(|| ChestTemplate {
+                entry,
+                name: r.get(2).cloned().unwrap_or_default(),
+                display: num(r.get(3)),
+                size: num(r.get(4)),
+            });
+            d.gathers.push(ChestSpawn {
+                entry,
+                pos: [num(r.get(5)), num(r.get(6)), num(r.get(7))],
+                facing: num(r.get(8)),
+                rotation: [num(r.get(9)), num(r.get(10)), num(r.get(11)), num(r.get(12))],
             });
         }
         for r in rows(&dir, "items.tsv") {

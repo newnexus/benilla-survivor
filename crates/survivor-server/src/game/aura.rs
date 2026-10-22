@@ -24,6 +24,15 @@ const UNIT_FIELD_AURA: u16 = 47;
 const UNIT_FIELD_AURAFLAGS: u16 = 95;
 const UNIT_FIELD_AURALEVELS: u16 = 101;
 
+/// Frost Armor (rank 1's id, the chain's name), and the frost it deals back to a creature that
+/// strikes the player: this much, and this much more a player level, each rank above the first
+/// adding half again.
+const FROST_ARMOR: u32 = 168;
+const FROST_ARMOR_DAMAGE: f32 = 4.0;
+const FROST_ARMOR_PER_LEVEL: f32 = 2.0;
+/// `SPELL_SCHOOL_FROST`.
+const SCHOOL_FROST: u8 = 4;
+
 /// A buff from one of the player's spells.
 pub(crate) struct Buff {
     pub(crate) spell: u32,
@@ -66,6 +75,23 @@ impl Game {
             self.player.buffs.push(Buff { spell, slot, ends });
         }
         self.send_auras(now);
+    }
+
+    /// A creature's blow landed on the player: under Frost Armor, it takes frost back.
+    pub(super) fn frost_armor_strikes_back(&mut self, attacker: u64, now: Instant) {
+        let Some(spell) = self
+            .player
+            .buffs
+            .iter()
+            .map(|b| b.spell)
+            .find(|&s| self.chain(s).0 == FROST_ARMOR)
+        else {
+            return;
+        };
+        let rank = self.chain(spell).1.max(1);
+        let damage = (FROST_ARMOR_DAMAGE + FROST_ARMOR_PER_LEVEL * self.player.level as f32)
+            * (1.0 + 0.5 * (rank - 1) as f32);
+        self.spell_hit(attacker, spell, SCHOOL_FROST, damage.round() as u32, false, now);
     }
 
     /// Buffs past their time come off.
