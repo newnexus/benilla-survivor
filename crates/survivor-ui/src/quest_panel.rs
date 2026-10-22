@@ -303,14 +303,21 @@ fn spawn_panel(
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::Center,
+                // On the left of the screen, as WoW's own quest window.
+                justify_content: JustifyContent::FlexStart,
                 align_items: AlignItems::Center,
                 column_gap: Val::Vh(2.0),
+                padding: UiRect::left(Val::Vh(3.0)),
                 ..default()
             },
             GlobalZIndex(PANEL_Z),
             Pickable::IGNORE,
-            UiTransform::from_scale(Vec2::splat(crate::SHRINK)),
+            // Shrunk about the screen's centre, then slid back to its left edge.
+            UiTransform {
+                translation: Val2::new(Val::Percent(-(1.0 - crate::SHRINK) * 50.0), Val::Px(0.0)),
+                scale: Vec2::splat(crate::SHRINK),
+                ..default()
+            },
         ))
         .with_children(|root| {
             // The giver's quests, a tab each, when there is more than one.
