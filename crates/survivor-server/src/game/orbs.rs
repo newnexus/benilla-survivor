@@ -3,9 +3,9 @@
 //! once inside the pickup range (which hands' gear widens). Reaching the player, the soul's
 //! experience and the coin's gold are theirs. The screen draws them from [`crate::orbs`].
 //!
-//! Souls also lie about the zone outside the towns, one beside every few creatures' homes,
-//! worth a part of a kill at the player's level. One taken comes back to its spot a few minutes
-//! later.
+//! Souls also lie about the zone outside the towns, one beside every creature's home, worth a
+//! part of a kill at the player's level, each drifting slowly round its spot. One taken comes
+//! back to its spot a few minutes later.
 
 use std::time::{Duration, Instant};
 
@@ -28,16 +28,21 @@ const COINS: [u32; 9] = [250_000, 50_000, 10_000, 2_500, 500, 100, 25, 5, 1];
 const SCATTER: f32 = 0.9;
 /// A field soul lies beside every this many creature homes, this far from it; it is worth
 /// this part of a kill, comes back this long after it was taken, and shows within this range.
-const FIELD_EVERY: usize = 3;
+const FIELD_EVERY: usize = 1;
 const FIELD_OFFSET: f32 = 2.5;
 const FIELD_WORTH: f32 = 0.25;
 const FIELD_BACK: Duration = Duration::from_secs(180);
 const FIELD_SHOW: f32 = 80.0;
+/// A field soul wanders a loop this far round its spot, taking about this long to go round.
+const WANDER: f32 = 3.0;
+const WANDER_ROUND: f32 = 40.0;
 
 /// A soul lying in the zone.
 pub(crate) struct FieldSoul {
     id: u64,
-    pos: [f32; 3],
+    /// The spot it wanders round, and where along its loop it started.
+    home: [f32; 3],
+    phase: f32,
     /// Taken: when it comes back.
     back: Option<Instant>,
 }
@@ -82,7 +87,7 @@ impl Game {
 
     /// The zone's souls, beside every [`FIELD_EVERY`]th creature home outside the towns.
     fn lay_field_souls(&mut self) {
-        let spots: Vec<[f32; 3]> = self
+        let spots: Vec<([f32; 3], f32)> = self
             .data
             .spawns
             .iter()
@@ -91,22 +96,38 @@ impl Game {
             .map(|s| {
                 // Off to a side of the home that differs from one to the next.
                 let a = (s.guid as f32 * 2.4).rem_euclid(std::f32::consts::TAU);
-                [
-                    s.pos[0] + FIELD_OFFSET * a.cos(),
-                    s.pos[1] + FIELD_OFFSET * a.sin(),
-                    s.pos[2] + FLOAT,
-                ]
+                (
+                    [
+                        s.pos[0] + FIELD_OFFSET * a.cos(),
+                        s.pos[1] + FIELD_OFFSET * a.sin(),
+                        s.pos[2] + FLOAT,
+                    ],
+                    a,
+                )
             })
             .collect();
-        for pos in spots {
+        for (home, phase) in spots {
             self.next_orb += 1;
             self.field_souls.push(FieldSoul {
                 id: self.next_orb,
-                pos,
+                home,
+                phase,
                 back: None,
             });
         }
         eprintln!("survivor: {} souls lie about the zone", self.field_souls.len());
+    }
+
+    /// Where field soul `s` is now along its loop: a slow figure of eight round its spot, each
+    /// at its own place along it.
+    fn field_soul_at(&self, s: &FieldSoul, now: Instant) -> [f32; 3] {
+        let t = now.saturating_duration_since(self.started).as_secs_f32();
+        let a = t / WANDER_ROUND * std::f32::consts::TAU + s.phase;
+        [
+            s.home[0] + WANDER * a.cos(),
+            s.home[1] + WANDER * (2.0 * a).sin() * 0.6,
+            s.home[2],
+        ]
     }
 
     /// The orbs move toward the player; those that reach them are taken. Field souls in the
@@ -128,20 +149,24 @@ impl Game {
                 * FIELD_WORTH
                 * (1.0 + self.gear(super::gear::GearStat::Experience)))
             .max(1.0) as u32;
-            for s in &mut self.field_souls {
-                if s.back.is_none()
-                    && super::dist2d(s.pos, me) <= range
-                    && (s.pos[2] - me[2]).abs() < range
-                {
-                    s.back = Some(now + FIELD_BACK);
-                    self.orbs.push(Loose {
-                        id: s.id,
-                        kind: Kind::Soul,
-                        amount: worth,
-                        pos: s.pos,
-                        born: now - POP,
-                    });
-                }
+            let near: Vec<(usize, [f32; 3])> = self
+                .field_souls
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.back.is_none())
+                .map(|(i, s)| (i, self.field_soul_at(s, now)))
+                .filter(|&(_, p)| super::dist2d(p, me) <= range && (p[2] - me[2]).abs() < range)
+                .collect();
+            for (i, pos) in near {
+                let s = &mut self.field_souls[i];
+                s.back = Some(now + FIELD_BACK);
+                self.orbs.push(Loose {
+                    id: s.id,
+                    kind: Kind::Soul,
+                    amount: worth,
+                    pos,
+                    born: now - POP,
+                });
             }
         }
         let mut taken = Vec::new();
@@ -172,11 +197,11 @@ impl Game {
         let lying = self
             .field_souls
             .iter()
-            .filter(|s| s.back.is_none() && super::dist2d(s.pos, me) <= FIELD_SHOW)
+            .filter(|s| s.back.is_none() && super::dist2d(s.home, me) <= FIELD_SHOW)
             .map(|s| Orb {
                 id: s.id,
                 kind: Kind::Soul,
-                pos: s.pos,
+                pos: self.field_soul_at(s, now),
                 amount: 0,
             });
         crate::orbs::set(
