@@ -102,15 +102,18 @@ impl Game {
         }
     }
 
-    /// The trails' ends: in town, every giver with a quest to offer or take back.
+    /// The trails' ends: inside a town's barrier, every giver of that town with a quest to offer
+    /// or take back. None outside, and none to another town's people.
     pub(super) fn publish_trails(&self, now: std::time::Instant) {
-        if self.in_run() || self.player.dead_until.is_some() {
+        let town = crate::town::town_at(self.player.pos);
+        let (false, None, Some(town)) = (self.in_run(), self.player.dead_until, town) else {
             crate::trails::set(Vec::new());
             return;
-        }
+        };
         let ends = self
             .npcs
             .iter()
+            .filter(|n| crate::town::town_at(n.here(now)) == Some(town))
             .filter(|n| {
                 matches!(
                     self.giver_status(n.entry),

@@ -141,8 +141,8 @@ pub(crate) struct SpellInfo {
 const FACTION_MONSTER: u32 = 14;
 
 /// A survivor's quests want many more kills than 1.12's: this many times, up to what the quest
-/// log's 6-bit counter can show.
-const QUEST_KILLS_TIMES: u32 = 10;
+/// log's 6-bit counter can show. (Gather quests, when they come, are to want only twice as many.)
+const QUEST_KILLS_TIMES: u32 = 6;
 const QUEST_KILLS_MAX: u32 = 60;
 
 /// `UNIT_NPC_FLAG_QUESTGIVER`.

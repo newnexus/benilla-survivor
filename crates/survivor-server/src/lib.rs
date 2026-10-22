@@ -34,7 +34,7 @@ pub mod orbs {
     pub enum Kind {
         /// A creature's experience: a light blue orb.
         Soul,
-        /// Its gold: a coin.
+        /// Its gold: one coin per piece of copper, silver or gold, single or worth 5 or 25.
         Coin,
     }
 
@@ -44,6 +44,8 @@ pub mod orbs {
         pub kind: Kind,
         /// World yards.
         pub pos: [f32; 3],
+        /// A coin's worth in copper (1, 5, 25, 100, ...); a soul's experience.
+        pub amount: u32,
     }
 
     static ORBS: Mutex<(u64, Vec<Orb>)> = Mutex::new((0, Vec::new()));

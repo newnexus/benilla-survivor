@@ -22,6 +22,8 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use survivor_server::picks::{self, Card, Offer};
 
 mod barrier;
+mod ground;
+mod roads;
 mod countdown;
 mod quest_frame;
 mod quest_panel;

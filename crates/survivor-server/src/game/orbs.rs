@@ -1,5 +1,5 @@
 //! What a kill leaves behind: a soul (the creature's experience, a light blue orb) and its gold
-//! (a coin). Both pop out of the corpse, then come back to the player: slowly from afar, fast
+//! (coins: copper, silver and gold pieces, single or worth 5 or 25, the fewest that make it). Both pop out of the corpse, then come back to the player: slowly from afar, fast
 //! once inside the pickup range (which hands' gear widens). Reaching the player, the soul's
 //! experience and the coin's gold are theirs. The screen draws them from [`crate::orbs`].
 
@@ -18,6 +18,10 @@ const RUSH: f32 = 22.0;
 const TAKE: f32 = 1.2;
 /// Orbs float this high off the ground.
 const FLOAT: f32 = 1.0;
+/// The coins there are, in copper, largest first.
+const COINS: [u32; 9] = [250_000, 50_000, 10_000, 2_500, 500, 100, 25, 5, 1];
+/// Coins fall scattered this far round the corpse.
+const SCATTER: f32 = 0.9;
 
 /// An orb in the world.
 pub(crate) struct Loose {
@@ -29,18 +33,29 @@ pub(crate) struct Loose {
 }
 
 impl Game {
-    /// A kill's soul and coin, at the corpse.
+    /// A kill's soul and coins, at the corpse.
     pub(super) fn drop_orbs(&mut self, at: [f32; 3], xp: u32, copper: u32, now: Instant) {
-        for (kind, amount, side) in [(Kind::Soul, xp, -0.6f32), (Kind::Coin, copper, 0.6)] {
-            if amount == 0 {
-                continue;
+        let mut drops = Vec::new();
+        if xp > 0 {
+            drops.push((Kind::Soul, xp));
+        }
+        let mut left = copper;
+        for coin in COINS {
+            while left >= coin {
+                drops.push((Kind::Coin, coin));
+                left -= coin;
             }
+        }
+        // Round the corpse, the soul first: a golden-angle spiral, so none land together.
+        for (k, (kind, amount)) in drops.into_iter().enumerate() {
+            let a = k as f32 * 2.4;
+            let r = SCATTER * (0.4 + 0.6 * ((k as f32 + 0.5) / 8.0).sqrt().min(1.0));
             self.next_orb += 1;
             self.orbs.push(Loose {
                 id: self.next_orb,
                 kind,
                 amount,
-                pos: [at[0] + side, at[1], at[2] + FLOAT],
+                pos: [at[0] + r * a.cos(), at[1] + r * a.sin(), at[2] + FLOAT],
                 born: now,
             });
         }
@@ -87,6 +102,7 @@ impl Game {
                     id: o.id,
                     kind: o.kind,
                     pos: o.pos,
+                    amount: o.amount,
                 })
                 .collect(),
         );

@@ -1,4 +1,5 @@
-//! What kills leave: souls (light blue glowing orbs) and coins (spinning gold), drawn where the
+//! What kills leave: souls (small light blue glowing orbs) and coins (spinning copper, silver or
+//! gold pieces, larger for the 5s and 25s), drawn where the
 //! server has them ([`survivor_server::orbs`]) and eased toward each new place between its
 //! ticks. And the purse: the player's gold in the corner, with WoW's coin icons.
 
@@ -7,13 +8,20 @@ use survivor_server::orbs::Kind;
 
 /// How fast a drawn orb catches up with the server's place for it, per second.
 const CATCH_UP: f32 = 14.0;
-/// A soul's core and glow radii, a coin's radius and thickness, yards.
-const SOUL: f32 = 0.22;
-const SOUL_GLOW: f32 = 0.5;
-const COIN: f32 = 0.28;
-const COIN_THICK: f32 = 0.05;
+/// A soul's core and glow radii, a single coin's radius and thickness, yards.
+const SOUL: f32 = 0.055;
+const SOUL_GLOW: f32 = 0.125;
+const COIN: f32 = 0.12;
+const COIN_THICK: f32 = 0.025;
+/// A 5 and a 25 coin are this much larger than a single one.
+const COIN_SIZES: [f32; 3] = [1.0, 1.3, 1.65];
 const SOUL_BLUE: Color = Color::srgb(0.45, 0.85, 1.0);
-const COIN_GOLD: Color = Color::srgb(1.0, 0.8, 0.25);
+/// Copper, silver and gold, with how much each glows.
+const METALS: [(Color, [f32; 3]); 3] = [
+    (Color::srgb(0.72, 0.42, 0.2), [0.3, 0.13, 0.04]),
+    (Color::srgb(0.85, 0.88, 0.92), [0.3, 0.3, 0.33]),
+    (Color::srgb(1.0, 0.8, 0.25), [0.6, 0.45, 0.05]),
+];
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(Startup, make_looks)
@@ -26,8 +34,10 @@ struct Looks {
     soul_glow: Handle<Mesh>,
     soul_mat: Handle<StandardMaterial>,
     glow_mat: Handle<StandardMaterial>,
-    coin: Handle<Mesh>,
-    coin_mat: Handle<StandardMaterial>,
+    /// Single, 5 and 25.
+    coins: [Handle<Mesh>; 3],
+    /// Copper, silver and gold.
+    metals: [Handle<StandardMaterial>; 3],
 }
 
 #[derive(Component)]
@@ -55,13 +65,15 @@ fn make_looks(
         soul_glow: meshes.add(Sphere::new(SOUL_GLOW).mesh().uv(16, 12)),
         soul_mat: materials.add(glow(SOUL_BLUE, 1.0)),
         glow_mat: materials.add(glow(SOUL_BLUE, 0.35)),
-        coin: meshes.add(Cylinder::new(COIN, COIN_THICK)),
-        coin_mat: materials.add(StandardMaterial {
-            base_color: COIN_GOLD,
-            emissive: LinearRgba::rgb(0.6, 0.45, 0.05),
-            metallic: 0.9,
-            perceptual_roughness: 0.3,
-            ..default()
+        coins: COIN_SIZES.map(|k| meshes.add(Cylinder::new(COIN * k, COIN_THICK * k))),
+        metals: METALS.map(|(color, [r, g, b])| {
+            materials.add(StandardMaterial {
+                base_color: color,
+                emissive: LinearRgba::rgb(r, g, b),
+                metallic: 0.9,
+                perceptual_roughness: 0.3,
+                ..default()
+            })
         }),
     });
 }
@@ -113,7 +125,22 @@ fn sync_orbs(
                 });
             }
             Kind::Coin => {
-                e.insert((Mesh3d(looks.coin.clone()), MeshMaterial3d(looks.coin_mat.clone())));
+                // Copper below 100, silver below 10,000; then single, 5 or 25 of that metal.
+                let metal = match o.amount {
+                    0..100 => 0,
+                    100..10_000 => 1,
+                    _ => 2,
+                };
+                let single = o.amount / [1, 100, 10_000][metal];
+                let size = match single {
+                    0..5 => 0,
+                    5..25 => 1,
+                    _ => 2,
+                };
+                e.insert((
+                    Mesh3d(looks.coins[size].clone()),
+                    MeshMaterial3d(looks.metals[metal].clone()),
+                ));
             }
         }
     }
@@ -125,7 +152,7 @@ fn move_orbs(time: Res<Time>, mut drawn: Query<(&Drawn, &mut Transform)>) {
     let t = time.elapsed_secs();
     let k = (CATCH_UP * dt).min(1.0);
     for (d, mut tf) in &mut drawn {
-        let bob = Vec3::Y * (0.12 * (t * 3.0 + d.seed).sin());
+        let bob = Vec3::Y * (0.06 * (t * 3.0 + d.seed).sin());
         let goal = d.target + bob;
         let here = tf.translation;
         tf.translation = here + (goal - here) * k;

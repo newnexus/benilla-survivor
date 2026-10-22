@@ -15,6 +15,8 @@ use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 use survivor_server::town::{Town, TOWNS};
 
+use crate::ground::Ground;
+
 /// A wall point every this many yards along the outline.
 const STEP: f32 = 1.5;
 /// The wall's height above the ground, and how far below it the foot reaches (a slope between
@@ -25,9 +27,6 @@ const SINK: f32 = 1.5;
 const RINGS: usize = 6;
 /// The flame's pattern repeats every this many yards around the wall.
 const FLAME_WIDTH: f32 = 4.0;
-/// A map tile's edge and a terrain chunk's, in yards.
-const TILE: f32 = 533.333_3;
-const CHUNK: f32 = TILE / 16.0;
 
 /// The flame: a fragment stage of our own over the stock mesh pipeline.
 pub(crate) type FlameMaterial = ExtendedMaterial<StandardMaterial, Flame>;
@@ -153,54 +152,6 @@ fn wall(town: &Town, ground: &mut Ground) -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_indices(Indices::U32(indices))
-}
-
-/// Terrain heights from the Eastern Kingdoms' map tiles, read as asked.
-struct Ground {
-    chain: Option<benilla_formats::Chain>,
-    tiles: std::collections::HashMap<(i32, i32), Option<Vec<benilla_adt::McnkChunk>>>,
-}
-
-impl Ground {
-    fn open() -> Self {
-        let chain = benilla_formats::wow_data()
-            .and_then(|d| benilla_formats::Chain::open(&d).ok());
-        Self {
-            chain,
-            tiles: std::collections::HashMap::new(),
-        }
-    }
-
-    /// The ground at WoW `(x, y)`: the nearest of the chunk's outer height grid's corners,
-    /// blended across the cell.
-    fn height(&mut self, x: f32, y: f32) -> Option<f32> {
-        let (col, row) = ((32.0 - y / TILE).floor() as i32, (32.0 - x / TILE).floor() as i32);
-        let chain = self.chain.as_mut()?;
-        let chunks = self.tiles.entry((col, row)).or_insert_with(|| {
-            let bytes = chain
-                .read(&format!("World\\Maps\\Azeroth\\Azeroth_{col}_{row}.adt"))
-                .ok()?;
-            let benilla_adt::ParsedAdt::Root(adt) =
-                benilla_adt::parse_adt(&mut std::io::Cursor::new(&bytes[..])).ok()?;
-            Some(adt.mcnk_chunks)
-        });
-        // A chunk's `position` is its corner at the largest x and y.
-        let c = chunks.as_ref()?.iter().find(|c| {
-            let p = c.header.position;
-            x <= p[0] && x > p[0] - CHUNK && y <= p[1] && y > p[1] - CHUNK
-        })?;
-        let heights = &c.heights.as_ref()?.heights;
-        let unit = CHUNK / 8.0;
-        let p = c.header.position;
-        // Outer vertex (i, j) is row i of 17 (nine outer, eight inner), column j.
-        let (fi, fj) = ((p[0] - x) / unit, (p[1] - y) / unit);
-        let (i, j) = ((fi.floor() as usize).min(7), (fj.floor() as usize).min(7));
-        let (ti, tj) = (fi - i as f32, fj - j as f32);
-        let at = |i: usize, j: usize| heights.get(i * 17 + j).copied();
-        let top = at(i, j)? * (1.0 - tj) + at(i, j + 1)? * tj;
-        let bottom = at(i + 1, j)? * (1.0 - tj) + at(i + 1, j + 1)? * tj;
-        Some(p[2] + top * (1.0 - ti) + bottom * ti)
-    }
 }
 
 /// Walls only in the world, never over the login and character screens.
