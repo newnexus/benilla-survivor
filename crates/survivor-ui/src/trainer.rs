@@ -309,7 +309,7 @@ fn spawn_window(
                                 }
                                 None => ("All ranks".to_owned(), false),
                             };
-                            r.spawn(step_button(id, Action::Buy(row.chain), can, 22.0))
+                            r.spawn(step_button(id, Action::Buy(row.chain), can, 27.0))
                                 .with_children(|b| {
                                     b.spawn(text(
                                         font,
