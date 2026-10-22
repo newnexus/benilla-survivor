@@ -373,8 +373,13 @@ pub(crate) fn creature_query_response(entry: u32, t: Option<&CreatureTemplate>) 
     b.0
 }
 
-/// `SMSG_ITEM_QUERY_SINGLE_RESPONSE`.
-pub(crate) fn item_query_response(entry: u32, t: Option<&ItemTemplate>) -> Vec<u8> {
+/// `SMSG_ITEM_QUERY_SINGLE_RESPONSE`, with `description`, the tooltip's quoted gold line at its
+/// foot: a survivor item's own stats, or empty.
+pub(crate) fn item_query_response_described(
+    entry: u32,
+    t: Option<&ItemTemplate>,
+    description: &str,
+) -> Vec<u8> {
     let mut b = Body::new();
     let Some(t) = t else {
         b.u32(entry | 0x8000_0000);
@@ -423,7 +428,7 @@ pub(crate) fn item_query_response(entry: u32, t: Option<&ItemTemplate>) -> Vec<u
         }
     }
     b.u32(0) // bonding
-        .cstr("")
+        .cstr(description)
         .u32(0) // page text
         .u32(0) // language
         .u32(0) // page material
@@ -893,7 +898,7 @@ mod tests {
         };
         whole(
             opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE,
-            &item_query_response(25, Some(&item)),
+            &item_query_response_described(25, Some(&item), ""),
         );
         whole(opcode::SMSG_INITIAL_SPELLS, &initial_spells(&[6603, 133, 168]));
         whole(opcode::SMSG_ACTION_BUTTONS, &action_buttons(&[0; 120]));

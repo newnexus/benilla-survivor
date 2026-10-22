@@ -189,6 +189,16 @@ impl GearItem {
         &self.stats
     }
 
+    /// Its rarity, upgrades and stats, a line each, for the item tooltip's description.
+    fn description(&self) -> String {
+        let mut lines = vec![match self.upgrades {
+            0 => RARITY_NAMES[usize::from(self.rarity)].to_owned(),
+            n => format!("{} +{n}", RARITY_NAMES[usize::from(self.rarity)]),
+        }];
+        lines.extend(self.stat_values().map(|(s, x)| s.line(x)));
+        lines.join("\n")
+    }
+
     fn stat_values(&self) -> impl Iterator<Item = (GearStat, f32)> + '_ {
         let k = 1.0 + UPGRADE_STEP * self.upgrades as f32;
         self.stats.iter().map(move |&(s, x)| (s, x * k))
@@ -512,6 +522,11 @@ impl Game {
         self.save();
     }
 
+    /// The stats of the chest gear worn now as `entry`, for its tooltip.
+    pub(crate) fn item_description(&self, entry: u32) -> Option<String> {
+        self.run_gear.values().find(|g| g.entry == entry).map(GearItem::description)
+    }
+
     /// Put what `slot` now holds on the character: the chest gear worn there, or else the
     /// starting gear. Chest gear gets an item object of its own in the equipment slot, so the
     /// character window shows it with its tooltip; the model shows its look. The fields go in
@@ -547,6 +562,16 @@ impl Game {
                 opcode::SMSG_UPDATE_OBJECT,
                 &packets::update_object(&[packets::Update::OutOfRange(vec![old])]),
             );
+        }
+        // The item's tooltip with our own stats: the client takes a fresh answer for an entry
+        // at any time, over what it cached.
+        if let Some(g) = self.run_gear.get(&slot) {
+            let reply = packets::item_query_response_described(
+                entry,
+                self.data.items.get(&entry),
+                &g.description(),
+            );
+            self.send(opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE, &reply);
         }
         fl.guid(f::PLAYER_INV_SLOT_HEAD + slot * 2, guid);
         fl.set(f::PLAYER_VISIBLE_ITEM_ENTRY + slot * f::PLAYER_VISIBLE_ITEM_STRIDE, entry);

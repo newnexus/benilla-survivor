@@ -239,7 +239,15 @@ fn session(
             opcode::CMSG_ITEM_QUERY_SINGLE => {
                 let Some(e) = body.get(..4) else { continue };
                 let entry = u32::from_le_bytes(e.try_into().expect("four bytes"));
-                let reply = packets::item_query_response(entry, data.items.get(&entry));
+                // A survivor item worn now answers with its own stats in the description.
+                let described = playing
+                    .lock()
+                    .expect("game")
+                    .as_ref()
+                    .and_then(|g| g.item_description(entry))
+                    .unwrap_or_default();
+                let reply =
+                    packets::item_query_response_described(entry, data.items.get(&entry), &described);
                 out.send(opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE, &reply)?;
             }
             opcode::CMSG_NAME_QUERY => {

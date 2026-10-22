@@ -30,7 +30,7 @@ const CLEAR_START: f32 = 1.2;
 const CLEAR_END: f32 = 1.5;
 /// A walker sets out every this many seconds, and lays a pair of steps every this many.
 const EVERY: f32 = 6.0;
-const PAIR_GAP: f32 = 0.4;
+const PAIR_GAP: f32 = 0.28;
 /// A step burns this long, growing in over the first part and dying over the last.
 const LIFE: f32 = 3.0;
 const GROW: f32 = 0.15;
