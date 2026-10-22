@@ -146,6 +146,13 @@ impl Screen {
         library.blp(path)
     }
 
+    /// Whether the library has loaded and knows `spell`: its icon can be had.
+    fn spell_icon_ready(&self, spell: u32) -> Option<()> {
+        let library = self.library.as_ref()?;
+        let library = library.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        library.spells.get(spell).map(|_| ())
+    }
+
     /// A spell's icon, once the library has loaded.
     fn spell_icon(&self, spell: u32) -> Option<Image> {
         let library = self.library.as_ref()?;
@@ -509,6 +516,8 @@ fn spawn_screen(
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 row_gap: Val::Vh(1.5),
+                // Raised off centre: the cast order strip shows below, to be changed meanwhile.
+                padding: UiRect::bottom(Val::Vh(20.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.62)),

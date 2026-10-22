@@ -1,11 +1,10 @@
 //! The survivor's action bars and its automatic rotation.
 //!
-//! - The main bar's front is the cast queue: the damage spells, button 1 first. The auto-cast
-//!   fires the best-rated one that is ready (the most damage per point of mana, rage or energy,
-//!   counting every enemy it would hit), and that spell goes to the back of the queue, so the
-//!   order shows what fired; every damage spell also gets a cooldown of its own, so a slow one is skipped
-//!   for a turn and the order shifts. Spells around the caster (Frost Nova, Arcane Explosion)
-//!   wait for a crowd: three creatures close by, or an elite.
+//! - The cast queue is the damage spells in the player's own order (dragged on the queue strip in
+//!   town, kept in the save), laid on the main bar's front. The auto-cast goes round it: from the
+//!   place after the last spell cast, the first that is ready; every damage spell gets a cooldown
+//!   of its own, so a slow one is skipped for a turn. Spells around the caster (Frost Nova, Arcane
+//!   Explosion) wait for a crowd: three creatures close by, or an elite.
 //! - The main bar's end holds the buffs and heals: a buff is cast while it is not up, a heal when
 //!   health runs low.
 //! - The right-hand vertical bar (1.12's MultiBarRight, buttons 25-36) holds the rest: food,
@@ -41,6 +40,8 @@ const AURA_PERIODIC_HEAL: u32 = 8;
 pub(crate) struct Bars {
     /// The cast queue, front first.
     queue: Vec<u32>,
+    /// The place in the queue the auto-cast tries next.
+    next: usize,
     /// Buffs and heals, filling the main bar from its end.
     keep_up: Vec<u32>,
     /// Button words (`action | kind << 24`) for the right-hand bar.
@@ -65,6 +66,7 @@ impl Game {
             bars.extras.push(hearth);
         }
         self.bars = bars;
+        self.order_queue();
         // `$SURVIVOR_EXTRA_SPELLS=116,122,...`: known from the start, for trying a rotation
         // without levelling up to it.
         for id in std::env::var("SURVIVOR_EXTRA_SPELLS")
@@ -98,7 +100,10 @@ impl Game {
             }
         } else {
             match self.spell(spell).map(|s| s.kind) {
-                Some(SpellKind::Damage) => self.bars.queue.push(spell),
+                Some(SpellKind::Damage) => {
+                    self.bars.queue.push(spell);
+                    self.order_queue();
+                }
                 Some(SpellKind::Defensive) => self.bars.keep_up.push(spell),
                 _ => self.bars.extras.push(spell),
             }
@@ -108,7 +113,7 @@ impl Game {
 
     /// Lay the roles out on the buttons, post the queue for the UI, and tell the client when
     /// `send`.
-    fn arrange_bars(&mut self, send: bool, fired: Option<u32>) {
+    pub(super) fn arrange_bars(&mut self, send: bool, fired: Option<u32>) {
         let mut buttons = [0u32; 120];
         let b = &self.bars;
         for (slot, &s) in b.queue.iter().take(MAIN_BAR).enumerate() {
@@ -126,20 +131,79 @@ impl Game {
             buttons[first + i] = w;
         }
         self.buttons = buttons;
-        crate::bar::post(b.queue.clone(), fired);
+        crate::bar::post(self.strip_spells(), fired, b.next, self.queue_editable());
         if send {
             self.send(opcode::SMSG_ACTION_BUTTONS, &packets::action_buttons(&self.buttons));
         }
     }
 
-    /// A queue spell started: it goes to the back.
+    /// A queue spell started: the auto-cast tries the one after it next.
     pub(super) fn rotate(&mut self, spell: u32) {
         let Some(i) = self.bars.queue.iter().position(|&s| s == spell) else {
             return;
         };
-        let s = self.bars.queue.remove(i);
-        self.bars.queue.push(s);
-        self.arrange_bars(true, Some(spell));
+        self.bars.next = (i + 1) % self.bars.queue.len().max(1);
+        self.arrange_bars(false, Some(spell));
+    }
+
+    /// The queue in the player's order (by rank chain); spells not placed yet go at its end.
+    fn order_queue(&mut self) {
+        let order = self.queue_order.clone();
+        let mut q = std::mem::take(&mut self.bars.queue);
+        q.sort_by_key(|&s| {
+            let chain = self.chain(s).0;
+            order.iter().position(|&c| c == chain).unwrap_or(usize::MAX)
+        });
+        self.bars.queue = q;
+        self.bars.next = 0;
+    }
+
+    /// What the queue strip shows: on a run the queue; in town also every damage skill bought
+    /// from the trainer (by its first rank), so the player can place it before it comes.
+    fn strip_spells(&self) -> Vec<u32> {
+        let mut list = self.bars.queue.clone();
+        if self.in_run() {
+            return list;
+        }
+        let have: Vec<u32> = list.iter().map(|&s| self.chain(s).0).collect();
+        let mut bought: Vec<u32> = self
+            .owned
+            .keys()
+            .copied()
+            .filter(|c| !have.contains(c))
+            .filter(|&c| self.spell(c).is_some_and(|s| s.kind == SpellKind::Damage))
+            .collect();
+        bought.sort_unstable();
+        list.extend(bought);
+        let order = &self.queue_order;
+        list.sort_by_key(|&s| {
+            let chain = self.chain(s).0;
+            order.iter().position(|&c| c == chain).unwrap_or(usize::MAX)
+        });
+        list
+    }
+
+    /// The order may be changed in town, and on a run while it is paused: the game menu, a
+    /// level-up's cards, a chest's.
+    pub(super) fn queue_editable(&self) -> bool {
+        !self.in_run() || self.paused()
+    }
+
+    /// The strip's answer: the spell at `from` moved to `to` (in town, or paused); the order is kept.
+    pub(super) fn take_queue_move(&mut self) {
+        let Some((from, to)) = crate::bar::take_move() else { return };
+        let mut list = self.strip_spells();
+        let len = list.len();
+        if !self.queue_editable() || from >= len || to >= len || from == to {
+            return;
+        }
+        let s = list.remove(from);
+        list.insert(to, s);
+        self.queue_order = list.iter().map(|&s| self.chain(s).0).collect();
+        self.order_queue();
+        eprintln!("survivor: queue order {:?}", self.queue_order);
+        self.arrange_bars(true, None);
+        self.save();
     }
 
     /// How long `spell` rests after its cast: its 1.12 cooldown, and for a damage spell at least
@@ -212,83 +276,10 @@ impl Game {
         let usable = |id: u32| {
             ready(id) && (!self.spell(id).is_some_and(Self::is_area) || self.crowded(now))
         };
-        // The best-rated ready spell: the most damage for what it costs, counting every enemy
-        // it would hit. A spell on cooldown gives way to the next best.
-        self.bars
-            .queue
-            .iter()
-            .copied()
-            .filter(|&id| usable(id))
-            .map(|id| (id, self.damage_per_power(id, now)))
-            .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(id, _)| id)
-    }
-
-    /// The damage a cast of `id` would do now, all told: its average hit (and its damage over
-    /// time) with upgrades, times the enemies it would strike.
-    pub(super) fn expected_damage(&self, id: u32, now: Instant) -> f32 {
-        let Some(s) = self.spell(id) else { return 0.0 };
-        let mut one = 0.0;
-        for e in 0..3 {
-            let avg = (s.base_points[e] + 1) as f32 + s.die_sides[e].max(0) as f32 / 2.0;
-            match s.effects[e] {
-                2 => one += avg,
-                // Weapon strikes: the weapon's average swing and the ability's bonus.
-                17 | 58 | 121 => one += (self.player.weapon.0 + self.player.weapon.1) / 2.0 + avg,
-                31 => one += (self.player.weapon.0 + self.player.weapon.1) / 2.0 * avg / 100.0,
-                6 if s.auras[e] == 3 => {
-                    let every = s.amplitudes[e].max(1000);
-                    one += avg * (s.duration_ms / every).max(1) as f32;
-                }
-                _ => {}
-            }
-        }
-        let mods = self.mods(id);
-        one * mods.damage * self.expected_hits(id, now) as f32
-    }
-
-    /// How many enemies a cast of `id` would strike now: all round the caster for a spell around
-    /// them, the target and those near it for an upgraded one, else the one.
-    fn expected_hits(&self, id: u32, now: Instant) -> usize {
-        let Some(s) = self.spell(id) else { return 0 };
-        let near = |at: [f32; 3], r: f32| {
-            (0..self.mobs.len())
-                .filter(|&i| {
-                    self.mobs[i].alive()
-                        && self.visible.contains(&i)
-                        && dist2d(self.mobs[i].here(now), at) <= r
-                })
-                .count()
-        };
-        if Self::is_area(s) {
-            return near(self.player.pos, AOE_RADIUS);
-        }
-        let mods = self.mods(id);
-        let Some(at) = self
-            .player
-            .target
-            .and_then(|g| self.mob_index(g))
-            .map(|i| self.mobs[i].here(now))
-        else {
-            return 1;
-        };
-        if mods.legendary {
-            near(at, super::upgrade::LEGENDARY_SPLASH).max(1)
-        } else if mods.targets > 0 {
-            near(at, AOE_RADIUS).clamp(1, 1 + mods.targets as usize)
-        } else {
-            1
-        }
-    }
-
-    /// Damage per point of power spent; a free spell outranks every paid one.
-    fn damage_per_power(&self, id: u32, now: Instant) -> f32 {
-        let damage = self.expected_damage(id, now);
-        let cost = self.spell(id).map_or(0, |s| self.cost_of(s));
-        if cost == 0 {
-            1.0e6 + damage
-        } else {
-            damage / cost as f32
-        }
+        // Round the player's order from where it stands: the first spell that is ready.
+        let q = &self.bars.queue;
+        (0..q.len())
+            .map(|k| q[(self.bars.next + k) % q.len()])
+            .find(|&id| usable(id))
     }
 }

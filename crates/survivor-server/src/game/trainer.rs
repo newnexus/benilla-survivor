@@ -192,6 +192,8 @@ impl Game {
         }
         self.send_money();
         self.save();
+        // The queue strip shows what is bought.
+        self.arrange_bars(false, None);
         let name = crate::trainer::current().map_or_else(String::new, |w| w.trainer);
         self.post_trainer(name);
     }

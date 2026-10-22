@@ -396,6 +396,8 @@ impl Game {
     /// creature stands where it is.
     pub(super) fn freeze(&mut self, now: Instant) {
         self.cancel_cast();
+        // The queue strip opens for changing the order (posted again as it closes, in thaw).
+        self.arrange_bars(false, None);
         self.root_counter += 1;
         self.send(
             opcode::SMSG_FORCE_MOVE_ROOT,
@@ -472,6 +474,7 @@ impl Game {
 
     /// The world stopped at `paused_at` runs on from `now`.
     fn thaw(&mut self, paused_at: Instant, now: Instant) {
+        self.arrange_bars(false, None);
         self.shift_timers(now.saturating_duration_since(paused_at));
         // The client's buff timers ran on through the pause.
         self.send_auras(now);

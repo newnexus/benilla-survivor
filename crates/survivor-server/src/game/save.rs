@@ -33,6 +33,8 @@ impl Game {
         let _ = writeln!(s, "money {}", self.banked_money());
         let _ = writeln!(s, "souls {}", self.souls);
         let _ = writeln!(s, "healer {}", self.healer.to_line());
+        let order: Vec<String> = self.queue_order.iter().map(u32::to_string).collect();
+        let _ = writeln!(s, "queue {}", order.join(","));
         for (chain, ranks) in &self.owned {
             let _ = writeln!(s, "owned {chain} {ranks}");
         }
@@ -91,6 +93,10 @@ impl Game {
                     crate::spirit::souls::set(self.souls);
                 }
                 Some("healer") => self.healer = super::spirit::Healer::from_line(&mut w),
+                Some("queue") => {
+                    self.queue_order =
+                        w.next().unwrap_or("").split(',').filter_map(|v| v.parse().ok()).collect();
+                }
                 Some("owned") => {
                     let chain = num(w.next()) as u32;
                     let ranks = num(w.next()) as u32;

@@ -1,6 +1,6 @@
-//! The cast queue as the survivor UI draws it: the spells on the main action bar's front, in the
-//! order they will be cast, and the last one that went off. The server posts every change; the UI
-//! reads it each frame and animates the step from the old order to the new one.
+//! The cast queue as the survivor UI draws it: the damage spells in the player's own order, which
+//! one goes next, and whether the order may be changed (in town). The server posts every change;
+//! the screen draws the strip and answers with a spell moved to a new place.
 
 use std::sync::Mutex;
 
@@ -11,8 +11,12 @@ pub struct Queue {
     pub version: u64,
     /// The spells in queue order, main bar button 1 first.
     pub spells: Vec<u32>,
-    /// The spell whose cast made this step, now at the back.
+    /// The spell whose cast made this step.
     pub fired: Option<u32>,
+    /// The place in `spells` the auto-cast tries next.
+    pub next: usize,
+    /// In town: the order may be dragged.
+    pub editable: bool,
 }
 
 static QUEUE: Mutex<Option<Queue>> = Mutex::new(None);
@@ -22,14 +26,28 @@ pub fn current() -> Option<Queue> {
     QUEUE.lock().expect("queue").clone()
 }
 
-pub(crate) fn post(spells: Vec<u32>, fired: Option<u32>) {
+pub(crate) fn post(spells: Vec<u32>, fired: Option<u32>, next: usize, editable: bool) {
     let mut q = QUEUE.lock().expect("queue");
     let version = q.as_ref().map_or(0, |q| q.version) + 1;
     *q = Some(Queue {
         version,
         spells,
         fired,
+        next,
+        editable,
     });
+}
+
+/// The screen's last move: the spell at `from` put at `to`.
+static MOVE: Mutex<Option<(usize, usize)>> = Mutex::new(None);
+
+/// The player dragged the spell at `from` to place `to`.
+pub fn move_spell(from: usize, to: usize) {
+    *MOVE.lock().expect("move") = Some((from, to));
+}
+
+pub(crate) fn take_move() -> Option<(usize, usize)> {
+    MOVE.lock().expect("move").take()
 }
 
 pub(crate) fn clear() {

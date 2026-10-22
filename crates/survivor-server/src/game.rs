@@ -301,6 +301,8 @@ pub(crate) struct Game {
     meals: Vec<meal::Meal>,
     /// What the action bars hold, by role ([`rotation`]).
     bars: rotation::Bars,
+    /// The player's cast order, by rank chain (the queue strip), kept in the save.
+    queue_order: Vec<u32>,
     /// In a safe town or out on a run ([`town`]).
     mode: town::Mode,
     /// The lasting level shown in town.
@@ -517,6 +519,7 @@ impl Game {
             pack,
             meals: Vec::new(),
             bars: rotation::Bars::default(),
+            queue_order: Vec::new(),
             mode: town::mode_at(pos),
             meta: town::Meta::default(),
             npcs: town::npcs(&data, now),
@@ -680,6 +683,7 @@ impl Game {
         self.take_panel_answer();
         self.take_armory_action();
         self.take_spirit_action();
+        self.take_queue_move();
         self.take_trainer_action();
         self.pause_for_menu();
         if self.paused() {
