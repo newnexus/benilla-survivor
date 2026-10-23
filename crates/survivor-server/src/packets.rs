@@ -406,16 +406,17 @@ pub(crate) fn item_query_response_described(
         b.u32(0); // required level, skill, skill rank, spell, honor rank, city rank, rep faction, rep rank
     }
     b.u32(t.max_count).u32(t.stackable.max(1)).u32(0); // container slots
-    for _ in 0..10 {
-        b.u32(0).u32(0); // stats
+    for k in 0..10 {
+        let (kind, value) = t.stats.get(k).copied().unwrap_or((0, 0));
+        b.u32(kind).u32(value as u32);
     }
     b.f32(t.damage.0).f32(t.damage.1).u32(t.damage_type);
     for _ in 1..5 {
         b.f32(0.0).f32(0.0).u32(0);
     }
     b.u32(t.armor);
-    for _ in 0..6 {
-        b.u32(0); // resistances
+    for r in t.resistances {
+        b.u32(r as u32);
     }
     b.u32(t.delay).u32(0).f32(0.0); // delay, ammo type, range mod
     // Spell slots: id, trigger, charges, cooldown, category, category cooldown. The first holds

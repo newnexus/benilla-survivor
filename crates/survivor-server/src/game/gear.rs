@@ -1,7 +1,8 @@
 //! Chest gear. Each chest holds three items, rolled when a run starts: a weapon or a piece of
-//! armour the class can wear (`gear.tsv`, the zone's own), each with a rarity of the survivor's
-//! own, common to legendary. Besides its armour or damage every item gives one stat by its slot,
-//! stronger the rarer it is; an epic or legendary one gives a second.
+//! armour the class can wear (`gear.tsv`, the zone's own). An item's rarity is its 1.12 quality
+//! (white common, green uncommon, blue rare, purple epic, orange legendary). Besides its own 1.12
+//! armour, damage and bonuses every item gives one survivor stat by its slot, stronger the rarer
+//! it is; a rare one or better gives a second, picked at random.
 //!
 //! | slot | stat | | slot | stat |
 //! |---|---|---|---|---|
@@ -31,9 +32,9 @@ use crate::picks::{Card, ItemCard};
 const LOOT: usize = 3;
 /// A chest recycled gives back this part of its price, percent.
 const RECYCLE_PERCENT: u32 = 20;
-/// Rarity weights, common to legendary, and how far each pushes the slot's stat.
-const RARITY_WEIGHTS: [u32; 5] = [48, 28, 15, 7, 2];
-const RARITY_RATE: [f32; 5] = [1.0, 1.4, 1.8, 1.8, 2.2];
+/// How far each rarity, common to legendary, pushes the slot's stat and the second one.
+const PRIMARY_RATE: [f32; 5] = [1.0, 1.4, 1.8, 2.2, 2.5];
+const SECONDARY_RATE: [f32; 5] = [0.0, 0.0, 0.5, 1.0, 1.5];
 pub(crate) const RARITY_NAMES: [&str; 5] = ["Common", "Uncommon", "Rare", "Epic", "Legendary"];
 /// Item level upgrades one item can take, each this much stronger and this many levels.
 pub(crate) const MAX_UPGRADES: u32 = 5;
@@ -189,6 +190,16 @@ impl GearItem {
         &self.stats
     }
 
+    /// Its stats at `rarity`: the first at the primary rate, the second (if any) at the
+    /// secondary one.
+    fn rate(&mut self, rarity: u8) {
+        self.rarity = rarity;
+        let r = usize::from(rarity);
+        for (k, (s, x)) in self.stats.iter_mut().enumerate() {
+            *x = s.base() * if k == 0 { PRIMARY_RATE[r] } else { SECONDARY_RATE[r] };
+        }
+    }
+
     /// Its rarity, upgrades and stats, a line each, for the item tooltip's description.
     fn description(&self) -> String {
         let mut lines = vec![match self.upgrades {
@@ -282,18 +293,15 @@ impl Game {
         self.publish_chest_glow();
     }
 
-    /// An item of `entry` with its rarity and stats rolled.
+    /// The rarity of `entry`: its 1.12 quality, poor and common both common.
+    pub(super) fn rarity_of(&self, entry: u32) -> u8 {
+        let quality = self.data.items.get(&entry).map_or(1, |t| t.quality);
+        quality.saturating_sub(1).min(4) as u8
+    }
+
+    /// An item of `entry` with its stats rolled.
     fn roll_item(&mut self, entry: u32) -> GearItem {
-        let total: u32 = RARITY_WEIGHTS.iter().sum();
-        let mut roll = (self.rng.next() % u64::from(total)) as u32;
-        let mut rarity = 0u8;
-        for (r, &w) in RARITY_WEIGHTS.iter().enumerate() {
-            if roll < w {
-                rarity = r as u8;
-                break;
-            }
-            roll -= w;
-        }
+        let rarity = self.rarity_of(entry);
         let template = self.data.items.get(&entry);
         let subclass = template.map_or(0, |t| t.subclass);
         let slot = template
@@ -309,19 +317,39 @@ impl Game {
             };
             main = choices[(self.rng.next() % choices.len() as u64) as usize];
         }
-        let mut stats = vec![(main, main.base() * RARITY_RATE[usize::from(rarity)])];
-        if rarity >= 3 {
-            let others: Vec<GearStat> = ALL_STATS.iter().copied().filter(|&s| s != main).collect();
-            let second = others[(self.rng.next() % others.len() as u64) as usize];
-            stats.push((second, second.base()));
-        }
-        GearItem {
+        let mut item = GearItem {
             entry,
             rarity,
-            stats,
+            stats: vec![(main, 0.0)],
             upgrades: 0,
             owned: None,
+        };
+        self.second_stat(&mut item);
+        item.rate(rarity);
+        item
+    }
+
+    /// A second stat for a rare item or better, unlike its first; none below rare.
+    fn second_stat(&mut self, item: &mut GearItem) {
+        if SECONDARY_RATE[usize::from(item.rarity)] == 0.0 {
+            item.stats.truncate(1);
+        } else if item.stats.len() < 2 {
+            let main = item.stats[0].0;
+            let others: Vec<GearStat> = ALL_STATS.iter().copied().filter(|&s| s != main).collect();
+            let second = others[(self.rng.next() % others.len() as u64) as usize];
+            item.stats.push((second, 0.0));
         }
+    }
+
+    /// A saved item brought to the present rules: its rarity its quality, its stats rated by it
+    /// (a second added or dropped to suit). Its stat kinds are kept.
+    pub(super) fn rerate(&mut self, item: &mut GearItem) {
+        item.rarity = self.rarity_of(item.entry);
+        if item.stats.is_empty() {
+            return;
+        }
+        self.second_stat(item);
+        item.rate(item.rarity);
     }
 
     /// The equipment slot `entry` goes in.
@@ -524,18 +552,11 @@ impl Game {
         self.save();
     }
 
-    /// A quest's reward: into the collection, its survivor stats rolled at its own quality (a
-    /// common 1.12 item is common, an uncommon one uncommon), worn when its slot is empty.
+    /// A quest's reward: into the collection, its survivor stats rolled, worn when its slot is
+    /// empty.
     pub(super) fn quest_reward_item(&mut self, entry: u32) {
         let Some(slot) = self.slot_of_item(entry) else { return };
-        let quality = self.data.items.get(&entry).map_or(1, |t| t.quality);
         let mut item = self.roll_item(entry);
-        let rarity = quality.saturating_sub(1).min(4) as u8;
-        if item.rarity != rarity {
-            let main = item.stats[0].0;
-            item.rarity = rarity;
-            item.stats = vec![(main, main.base() * RARITY_RATE[usize::from(rarity)])];
-        }
         let id = self.next_owned;
         self.next_owned += 1;
         item.owned = Some(id);

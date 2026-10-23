@@ -134,7 +134,8 @@ impl Game {
                     if !self.data.items.contains_key(&entry) {
                         continue;
                     }
-                    let item = GearItem::restored(entry, rarity, stats, upgrades, id);
+                    let mut item = GearItem::restored(entry, rarity, stats, upgrades, id);
+                    self.rerate(&mut item);
                     if worn {
                         if let Some(slot) = self.slot_of_item(entry) {
                             self.loadout.insert(slot, id);
@@ -148,9 +149,9 @@ impl Game {
                     });
                 }
                 Some("seen") => {
+                    // The saved rarity was rolled before rarity became the item's quality.
                     let entry = num(w.next()) as u32;
-                    let rarity = num(w.next()) as u8;
-                    self.seen.insert(entry, rarity);
+                    self.seen.insert(entry, self.rarity_of(entry));
                 }
                 _ => {}
             }

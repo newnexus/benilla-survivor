@@ -100,6 +100,11 @@ pub(crate) struct ItemTemplate {
     pub(crate) max_count: u32,
     /// The spell using the item casts (food, drink), 0 for none.
     pub(crate) spell: u32,
+    /// Its own bonuses, `(ItemModType, value)`: 3 agility, 4 strength, 5 intellect, 6 spirit,
+    /// 7 stamina.
+    pub(crate) stats: Vec<(u32, i32)>,
+    /// Holy, fire, nature, frost, shadow and arcane resistance.
+    pub(crate) resistances: [i32; 6],
 }
 
 /// What a spell is for, in the level-up picks.
@@ -553,6 +558,24 @@ impl WorldData {
                 sell: num(r.get(19)),
                 max_count: num(r.get(20)),
                 spell: num(r.get(21)),
+                stats: r
+                    .get(22)
+                    .map(|v| v.split(','))
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| {
+                        let (k, v) = p.split_once(':')?;
+                        Some((k.trim().parse().ok()?, v.trim().parse().ok()?))
+                    })
+                    .collect(),
+                resistances: {
+                    let mut res = [0; 6];
+                    let mut it = r.get(23).map(|v| v.split(',')).into_iter().flatten();
+                    for x in &mut res {
+                        *x = it.next().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+                    }
+                    res
+                },
             };
             d.items.insert(i.entry, i);
         }

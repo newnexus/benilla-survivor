@@ -1026,7 +1026,7 @@ fn main() -> Result<()> {
     std::fs::write(out.join("start_items.tsv"), start)?;
 
     // Chest gear: the zone's weapons and armour of common and uncommon make, for any Forsaken
-    // class, by the level that may wear them. Their rarity in a run is the survivor's own.
+    // class, by the level that may wear them. Their rarity in a run is their quality.
     let mut stmt = conn.prepare(
         "SELECT entry, required_level FROM item_template t
          WHERE patch = (SELECT MAX(patch) FROM item_template u
@@ -1056,7 +1056,12 @@ fn main() -> Result<()> {
     let mut stmt = conn.prepare(
         "SELECT entry, class, subclass, name, display_id, quality, inventory_type, delay,
                 dmg_min1, dmg_max1, dmg_type1, armor, stackable, sheath, max_durability,
-                material, item_level, flags, buy_price, sell_price, max_count, spellid_1
+                material, item_level, flags, buy_price, sell_price, max_count, spellid_1,
+                stat_type1, stat_value1, stat_type2, stat_value2, stat_type3, stat_value3,
+                stat_type4, stat_value4, stat_type5, stat_value5, stat_type6, stat_value6,
+                stat_type7, stat_value7, stat_type8, stat_value8, stat_type9, stat_value9,
+                stat_type10, stat_value10,
+                holy_res, fire_res, nature_res, frost_res, shadow_res, arcane_res
          FROM item_template t
          WHERE entry = ?1 AND patch = (SELECT MAX(patch) FROM item_template u
                                        WHERE u.entry = t.entry AND u.patch <= ?2)",
@@ -1064,7 +1069,7 @@ fn main() -> Result<()> {
     let mut items = String::from(
         "entry\tclass\tsubclass\tname\tdisplay\tquality\tinventory_type\tdelay\tdmg_min\tdmg_max\t\
          dmg_type\tarmor\tstackable\tsheath\tdurability\tmaterial\titem_level\tflags\tbuy\tsell\t\
-         max_count\tspell\n",
+         max_count\tspell\tstats\tresistances\n",
     );
     // The items' use spells (food, drink), exported with the class spells.
     let mut item_spells = std::collections::BTreeSet::new();
@@ -1085,7 +1090,19 @@ fn main() -> Result<()> {
                     _ => String::new(),
                 })
                 .collect();
-            writeln!(items, "{}", cols.join("\t"))?;
+            // The item's own bonuses, as `type:value` pairs (`ItemModType`: 3 agility, 4
+            // strength, 5 intellect, 6 spirit, 7 stamina), and its six resistances, holy to arcane.
+            let mut stats = Vec::new();
+            for k in 0..10 {
+                let (kind, value): (i64, i64) = (r.get(22 + 2 * k)?, r.get(23 + 2 * k)?);
+                if value != 0 {
+                    stats.push(format!("{kind}:{value}"));
+                }
+            }
+            let resists = (42..48)
+                .map(|i| r.get::<_, i64>(i).map(|v| v.to_string()))
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            writeln!(items, "{}\t{}\t{}", cols.join("\t"), stats.join(","), resists.join(","))?;
         }
     }
     std::fs::write(out.join("items.tsv"), items)?;
