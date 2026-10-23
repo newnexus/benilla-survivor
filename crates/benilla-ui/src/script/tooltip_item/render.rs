@@ -592,6 +592,13 @@ pub(super) fn render_view_flagged(
                 )?;
             }
         }
+        // survivor: a description led by U+0001 is the survivor-like's own item stats, one per
+        // line, drawn white under the item's own instead of as quoted flavour text.
+        if let Some(lines) = v.description.strip_prefix('\u{1}') {
+            for line in lines.lines().filter(|l| !l.is_empty()) {
+                add((line.to_owned(), WHITE))?;
+            }
+        }
         // The enchant family, `[0x52c991, 0x52cc69)`: the slot loop, or with no id source at all
         // the `ITEM_RANDOM_ENCHANT` placeholder (`0x52cc33`). Slots 0 and 1 are green `0xc0d3ac`
         // for a positive id and red `0xc0d398` for a negative one; the suffix slots 2..6 are always
@@ -872,7 +879,8 @@ pub(super) fn render_view_flagged(
     if flags.name_only {
         return Ok(Some(live));
     }
-    if !v.description.is_empty() {
+    // survivor: not the survivor's stat lines, drawn with the stats above.
+    if !v.description.is_empty() && !v.description.starts_with('\u{1}') {
         addw((format!("\"{}\"", v.description), GOLD))?;
     }
     // The creator line needs an item object or a block (`0x52e1c1`, `0x52e1c7`), so a template

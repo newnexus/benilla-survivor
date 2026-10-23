@@ -15,9 +15,14 @@
 //! Half the legs lower costs; the other half quicken a resource by their material: cloth mana,
 //! leather mana or energy, mail and plate mana or rage.
 //!
+//! Of the armour found, most ([`OWN_ARMOUR_PERCENT`]) is the class's own kind (warriors mail,
+//! rogues leather, the casters cloth); the rest is any other kind, often one the class cannot
+//! wear: that is for the player's other characters, who share the collection.
+//!
 //! Taking a card wears the item for the run; taking the one already worn raises its item level
-//! instead (up to [`MAX_UPGRADES`]). What is worn when the player walks back into town, alive,
-//! joins their collection; dying loses it.
+//! instead (up to [`MAX_UPGRADES`]); taking one the class cannot wear keeps it for the alts. What
+//! is worn or kept when the player walks back into town, alive, joins the collection; dying loses
+//! it.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -30,6 +35,8 @@ use crate::picks::{Card, ItemCard};
 
 /// The cards a chest offers.
 const LOOT: usize = 3;
+/// The share of armour found that is the class's own kind, percent.
+const OWN_ARMOUR_PERCENT: u64 = 80;
 /// A chest recycled gives back this part of its price, percent.
 const RECYCLE_PERCENT: u32 = 20;
 /// How far each rarity, common to legendary, pushes the slot's stat and the second one.
@@ -200,14 +207,15 @@ impl GearItem {
         }
     }
 
-    /// Its rarity, upgrades and stats, a line each, for the item tooltip's description.
+    /// Its stats, a line each, for the item tooltip's description, led by [`STAT_LINES_MARK`]:
+    /// the client's tooltip draws them as white stat lines under the item's own instead of a
+    /// quoted gold description.
     fn description(&self) -> String {
-        let mut lines = vec![match self.upgrades {
-            0 => RARITY_NAMES[usize::from(self.rarity)].to_owned(),
-            n => format!("{} +{n}", RARITY_NAMES[usize::from(self.rarity)]),
-        }];
-        lines.extend(self.stat_values().map(|(s, x)| s.line(x)));
-        lines.join("\n")
+        let mut lines: Vec<String> = self.stat_values().map(|(s, x)| s.line(x)).collect();
+        if self.upgrades > 0 {
+            lines.push(format!("Upgraded +{}", self.upgrades));
+        }
+        format!("{STAT_LINES_MARK}{}", lines.join("\n"))
     }
 
     fn stat_values(&self) -> impl Iterator<Item = (GearStat, f32)> + '_ {
@@ -215,6 +223,10 @@ impl GearItem {
         self.stats.iter().map(move |&(s, x)| (s, x * k))
     }
 }
+
+/// Leads an item description the client's tooltip shows as stat lines (`benilla-ui`
+/// `tooltip_item/render.rs`, marked `// survivor:`).
+const STAT_LINES_MARK: char = '\u{1}';
 
 /// The equipment slot names on a card.
 fn slot_name(slot: u16) -> &'static str {
@@ -232,6 +244,28 @@ fn slot_name(slot: u16) -> &'static str {
         16 => "Off Hand",
         17 => "Ranged",
         _ => "Item",
+    }
+}
+
+/// The armour `class` is best in: warriors mail, rogues leather, the casters cloth.
+fn class_armour(class: u8) -> u32 {
+    match class {
+        1 => 3,
+        4 => LEATHER,
+        _ => CLOTH,
+    }
+}
+
+/// Whether an item is `class`'s own find: a weapon it wields, or armour of its own kind (any
+/// cloak, a warrior's shield).
+fn own_find(class: u8, item_class: u32, subclass: u32, inventory_type: u32) -> bool {
+    match item_class {
+        4 => {
+            subclass == class_armour(class)
+                || inventory_type == 16
+                || (subclass == 6 && class == 1)
+        }
+        _ => wearable(class, item_class, subclass, inventory_type),
     }
 }
 
@@ -265,23 +299,37 @@ fn wearable(class: u8, item_class: u32, subclass: u32, inventory_type: u32) -> b
 impl Game {
     /// Three items for every chest, for this run.
     pub(super) fn roll_chest_loot(&mut self) {
-        let pool: Vec<u32> = self
-            .data
-            .gear
-            .iter()
-            .filter(|&&(entry, _)| {
-                self.data.items.get(&entry).is_some_and(|t| {
-                    wearable(self.player.class, t.class, t.subclass, t.inventory_type)
-                        && super::super::world::equip_slot(t.inventory_type).is_some()
+        let class = self.player.class;
+        let gear = |own: bool| -> Vec<u32> {
+            self.data
+                .gear
+                .iter()
+                .filter(|&&(entry, _)| {
+                    self.data.items.get(&entry).is_some_and(|t| {
+                        super::super::world::equip_slot(t.inventory_type).is_some()
+                            && if own {
+                                own_find(class, t.class, t.subclass, t.inventory_type)
+                            } else {
+                                t.class == 4
+                                    && matches!(t.subclass, 1..=4 | 6)
+                                    && !own_find(class, t.class, t.subclass, t.inventory_type)
+                            }
+                    })
                 })
-            })
-            .map(|g| g.0)
-            .collect();
+                .map(|g| g.0)
+                .collect()
+        };
+        let (pool, others) = (gear(true), gear(false));
         self.chest_loot = (0..self.chests.len())
             .map(|_| {
                 let mut items: Vec<GearItem> = Vec::new();
                 while items.len() < LOOT && !pool.is_empty() {
-                    let entry = pool[(self.rng.next() % pool.len() as u64) as usize];
+                    let mut entry = pool[(self.rng.next() % pool.len() as u64) as usize];
+                    let armour = self.data.items.get(&entry).is_some_and(|t| t.class == 4);
+                    if armour && !others.is_empty() && self.rng.next() % 100 >= OWN_ARMOUR_PERCENT
+                    {
+                        entry = others[(self.rng.next() % others.len() as u64) as usize];
+                    }
                     if items.iter().any(|i| i.entry == entry) {
                         continue;
                     }
@@ -352,6 +400,13 @@ impl Game {
         item.rate(item.rarity);
     }
 
+    /// Whether the player's class wears or wields `entry`.
+    pub(super) fn can_wear(&self, entry: u32) -> bool {
+        self.data.items.get(&entry).is_some_and(|t| {
+            wearable(self.player.class, t.class, t.subclass, t.inventory_type)
+        })
+    }
+
     /// The equipment slot `entry` goes in.
     pub(super) fn slot_of_item(&self, entry: u32) -> Option<u16> {
         self.data
@@ -408,6 +463,9 @@ impl Game {
                 lines.push(format!("{} armor", t.armor));
             }
         }
+        if !self.can_wear(g.entry) {
+            lines.push("For your other characters: kept if you get home".to_owned());
+        }
         match worn {
             Some(w) if w.upgrades < MAX_UPGRADES => lines.push(format!(
                 "Worn: item level +{} (upgrade {} of {MAX_UPGRADES})",
@@ -440,6 +498,13 @@ impl Game {
         let Some(t) = self.data.items.get(&g.entry).cloned() else { return };
         let Some(slot) = super::super::world::equip_slot(t.inventory_type) else { return };
         let name = t.name.clone();
+        if !self.can_wear(g.entry) {
+            eprintln!("survivor: keeping {name} for the alts");
+            let line = format!("{name}: kept for your other characters");
+            self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+            self.run_alt.push(g);
+            return;
+        }
         match self.run_gear.get_mut(&slot) {
             Some(w) if w.entry == g.entry => {
                 w.upgrades = (w.upgrades + 1).min(MAX_UPGRADES);
@@ -548,6 +613,24 @@ impl Game {
                 }
             }
         }
+        for mut item in std::mem::take(&mut self.run_alt) {
+            let name = self.data.items.get(&item.entry).map_or("", |t| t.name.as_str()).to_owned();
+            if died {
+                eprintln!("survivor: lost {name}");
+                continue;
+            }
+            let id = self.next_owned;
+            self.next_owned += 1;
+            eprintln!("survivor: brought home {name} for the alts");
+            let line = format!("Brought home for your other characters: {name}");
+            self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+            item.owned = Some(id);
+            self.collection.push(OwnedItem {
+                id,
+                item,
+                favourite: false,
+            });
+        }
         self.wear_loadout();
         self.save();
     }
@@ -571,7 +654,9 @@ impl Game {
             item,
             favourite: false,
         });
-        self.loadout.entry(slot).or_insert(id);
+        if self.can_wear(entry) {
+            self.loadout.entry(slot).or_insert(id);
+        }
         self.wear_loadout();
         self.save();
     }
@@ -705,8 +790,9 @@ impl Game {
         }
     }
 
-    /// The collection chest's tabs: every owned item of each slot, and in shadow the ones only
-    /// seen. Favourites first, then what is worn, then by rarity and upgrades.
+    /// The collection chest's tabs: every owned item of each slot the class can wear, and in
+    /// shadow the ones only seen. Favourites first, then what is worn, then by rarity and
+    /// upgrades.
     fn post_armory(&mut self) {
         let tabs = ARMORY_SLOTS
             .iter()
@@ -714,7 +800,9 @@ impl Game {
                 let mut rows: Vec<crate::armory::Row> = self
                     .collection
                     .iter()
-                    .filter(|o| self.slot_of_item(o.item.entry) == Some(slot))
+                    .filter(|o| {
+                        self.slot_of_item(o.item.entry) == Some(slot) && self.can_wear(o.item.entry)
+                    })
                     .map(|o| {
                         let worn = self.loadout.get(&slot) == Some(&o.id);
                         self.armory_row(&o.item, o.id, o.favourite, worn, false)
@@ -725,7 +813,11 @@ impl Game {
                 rows.extend(
                     self.seen
                         .iter()
-                        .filter(|(e, _)| !owned.contains(e) && self.slot_of_item(**e) == Some(slot))
+                        .filter(|(e, _)| {
+                            !owned.contains(e)
+                                && self.slot_of_item(**e) == Some(slot)
+                                && self.can_wear(**e)
+                        })
                         .map(|(&entry, &rarity)| {
                             let g = GearItem {
                                 entry,

@@ -357,6 +357,10 @@ pub(crate) struct Game {
     chest_loot: Vec<Vec<gear::GearItem>>,
     /// Chest gear worn this run, by equipment slot, and what the player has brought home.
     run_gear: gear::RunGear,
+    /// Armour found this run that the class cannot wear, for the alts: the collection's if the
+    /// player gets home alive.
+    run_alt: Vec<gear::GearItem>,
+    /// The collection, shared by all the player's characters.
     collection: Vec<gear::OwnedItem>,
     /// What the player wears from the collection, by slot, and the next owned item's id.
     loadout: std::collections::HashMap<u16, u64>,
@@ -557,6 +561,7 @@ impl Game {
             chest_asked: None,
             chest_loot: Vec::new(),
             run_gear: gear::RunGear::default(),
+            run_alt: Vec::new(),
             collection: Vec::new(),
             loadout: std::collections::HashMap::new(),
             next_owned: 1,
