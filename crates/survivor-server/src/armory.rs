@@ -30,6 +30,11 @@ pub struct Row {
     pub worn: bool,
     /// Seen in a chest, never taken home: shown in shadow.
     pub seen_only: bool,
+    /// Where it is worn and what it is, as its tooltip says: `Chest` and `Cloth`, `One-Hand`
+    /// and `Dagger`.
+    pub slot_text: String,
+    pub kind: String,
+    pub durability: u32,
     /// Armour, or damage and speed.
     pub base: Vec<String>,
     /// The survivor stats, a line each.

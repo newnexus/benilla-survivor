@@ -2,8 +2,9 @@
 //! player owns for that slot (favourites first, then what is worn, then the rarest), each with
 //! its upgrades. Items only seen in chests stand in shadow below. A tap on an item unfolds it:
 //! its survivor stats on one line, its armour and own bonuses on the next, and a button to wear
-//! it or take it off. The star marks a favourite. The server holds it all
-//! ([`survivor_server::armory`]).
+//! it or take it off. The star marks a favourite. The pointer over an icon shows the item's
+//! tooltip as the character window draws it (the game's own tooltip lies under these windows).
+//! The server holds it all ([`survivor_server::armory`]).
 
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::input::touch::Touches;
@@ -28,10 +29,37 @@ const WHEEL_LINE: f32 = 40.0;
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (show_armory, press, scroll_list, block_touch.after(crate::quest_panel::block_touch)),
+        (
+            show_armory,
+            press,
+            scroll_list,
+            item_tooltip,
+            block_touch.after(crate::quest_panel::block_touch),
+        ),
     )
     .init_resource::<Unfolded>();
 }
+
+/// An item's icon in the list, with the item, for its tooltip.
+#[derive(Component)]
+struct ItemIcon(Row);
+
+/// The tooltip on screen.
+#[derive(Component)]
+struct ItemTooltip;
+
+/// The game's tooltip look: its backdrop, its edge, and the white of its lines.
+const TIP_BACK: Color = Color::srgba(0.035, 0.035, 0.075, 0.92);
+const TIP_EDGE: Color = Color::srgb(0.75, 0.75, 0.75);
+const TIP_TEXT: Color = Color::WHITE;
+/// The tooltip's name colours, by rarity: the game's item quality colours, common white.
+const TIP_NAME: [Color; 5] = [
+    Color::WHITE,
+    Color::srgb(0.12, 1.0, 0.0),
+    Color::srgb(0.0, 0.44, 0.87),
+    Color::srgb(0.64, 0.21, 0.93),
+    Color::srgb(1.0, 0.5, 0.0),
+];
 
 /// The item unfolded in the list, by its key.
 #[derive(Resource, Default)]
@@ -363,6 +391,8 @@ fn spawn_row(
             }
             row.spawn((
                 img,
+                ItemIcon(r.clone()),
+                RelativeCursorPosition::default(),
                 Node {
                     width: Val::Vh(8.0),
                     height: Val::Vh(8.0),
@@ -475,6 +505,116 @@ fn spawn_row(
             });
         });
     });
+}
+
+/// The tooltip of the item whose icon is under the pointer, beside the pointer, as the game
+/// draws one: the name in its rarity's colour, where it is worn and what it is, armour or damage,
+/// its stats, its durability.
+fn item_tooltip(
+    mut commands: Commands,
+    screen: Res<crate::Screen>,
+    window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    icons: Query<(&ItemIcon, &RelativeCursorPosition)>,
+    mut tips: Query<(Entity, &mut Node, &ComputedNode), With<ItemTooltip>>,
+    mut shown: Local<Option<(u64, u32)>>,
+) {
+    let Ok(window) = window.single() else { return };
+    let hovered = icons
+        .iter()
+        .find(|(i, c)| c.cursor_over && !i.0.seen_only)
+        .map(|(i, _)| &i.0);
+    let now = hovered.map(|r| (r.key, r.entry));
+    if now != *shown {
+        for (e, ..) in &tips {
+            commands.entity(e).despawn();
+        }
+        *shown = now;
+        if let (Some(r), Some(font)) = (hovered, screen.font()) {
+            spawn_tooltip(&mut commands, r, font, window.height() / 100.0);
+        }
+        return;
+    }
+    // Beside the pointer, kept on the screen.
+    let Some(cursor) = window.cursor_position() else { return };
+    for (_, mut node, computed) in &mut tips {
+        let size = computed.size() * computed.inverse_scale_factor();
+        let x = (cursor.x + 18.0).min(window.width() - size.x - 4.0);
+        let y = (cursor.y - size.y - 8.0).max(4.0);
+        node.left = Val::Px(x);
+        node.top = Val::Px(y);
+    }
+}
+
+fn spawn_tooltip(commands: &mut Commands, r: &Row, font: Handle<Font>, vh: f32) {
+    let text = |s: &str, size: f32, color: Color| {
+        (
+            Text::new(s.to_owned()),
+            TextFont {
+                font: font.clone(),
+                font_size: size * vh,
+                ..default()
+            },
+            TextColor(color),
+        )
+    };
+    let pair = |left: &str, right: &str| (left.to_owned(), right.to_owned());
+    let mut lines: Vec<(String, String)> = vec![pair(&r.slot_text, &r.kind)];
+    match r.base.as_slice() {
+        [damage, speed] => lines.push(pair(damage, speed)),
+        [armor] => lines.push(pair(armor, "")),
+        _ => {}
+    }
+    for s in r.own.iter().chain(&r.bonus) {
+        lines.push(pair(s, ""));
+    }
+    if r.durability > 0 {
+        lines.push(pair(&format!("Durability {0} / {0}", r.durability), ""));
+    }
+    let mut name = r.name.clone();
+    if r.upgrades > 0 {
+        name.push_str(&format!(" +{}", r.upgrades));
+    }
+    commands
+        .spawn((
+            ItemTooltip,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(-1000.0),
+                top: Val::Px(-1000.0),
+                flex_direction: FlexDirection::Column,
+                min_width: Val::Vh(22.0),
+                padding: UiRect::axes(Val::Vh(1.2), Val::Vh(0.9)),
+                row_gap: Val::Vh(0.15),
+                border: UiRect::all(Val::Vh(0.25)),
+                border_radius: BorderRadius::all(Val::Vh(0.7)),
+                ..default()
+            },
+            BackgroundColor(TIP_BACK),
+            BorderColor::all(TIP_EDGE),
+            GlobalZIndex(PANEL_Z + 20),
+            Pickable::IGNORE,
+        ))
+        .with_children(|tip| {
+            let colour = TIP_NAME[usize::from(r.rarity.min(4))];
+            tip.spawn((text(&name, 2.6, colour), Pickable::IGNORE));
+            for (left, right) in &lines {
+                tip.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceBetween,
+                        column_gap: Val::Vh(3.0),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_children(|l| {
+                    l.spawn((text(left, 2.2, TIP_TEXT), Pickable::IGNORE));
+                    if !right.is_empty() {
+                        l.spawn((text(right, 2.2, TIP_TEXT), Pickable::IGNORE));
+                    }
+                });
+            }
+        });
 }
 
 fn press(

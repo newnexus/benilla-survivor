@@ -282,6 +282,54 @@ fn bonus_line(kind: u32, value: i32) -> Option<String> {
     Some(format!("{value:+} {name}"))
 }
 
+/// Where an item of `inventory_type` is worn, as its tooltip says.
+fn inventory_text(inventory_type: u32) -> &'static str {
+    match inventory_type {
+        1 => "Head",
+        3 => "Shoulder",
+        5 | 20 => "Chest",
+        6 => "Waist",
+        7 => "Legs",
+        8 => "Feet",
+        9 => "Wrist",
+        10 => "Hands",
+        16 => "Back",
+        13 => "One-Hand",
+        17 => "Two-Hand",
+        21 => "Main Hand",
+        14 | 22 => "Off Hand",
+        23 => "Held In Off-hand",
+        15 | 26 => "Ranged",
+        25 => "Thrown",
+        _ => "",
+    }
+}
+
+/// What an item is, as its tooltip says: the armour's kind or the weapon's.
+fn kind_text(class: u32, subclass: u32) -> &'static str {
+    match (class, subclass) {
+        (4, 1) => "Cloth",
+        (4, 2) => "Leather",
+        (4, 3) => "Mail",
+        (4, 4) => "Plate",
+        (4, 6) => "Shield",
+        (2, 0 | 1) => "Axe",
+        (2, 2) => "Bow",
+        (2, 3) => "Gun",
+        (2, 4 | 5) => "Mace",
+        (2, 6) => "Polearm",
+        (2, 7 | 8) => "Sword",
+        (2, 10) => "Staff",
+        (2, 13) => "Fist Weapon",
+        (2, 15) => "Dagger",
+        (2, 16) => "Thrown",
+        (2, 18) => "Crossbow",
+        (2, 19) => "Wand",
+        (2, 20) => "Fishing Pole",
+        _ => "",
+    }
+}
+
 /// The equipment slot names on a card.
 fn slot_name(slot: u16) -> &'static str {
     match slot {
@@ -948,10 +996,10 @@ impl Game {
         let mut base = Vec::new();
         if let Some(t) = t {
             if t.damage.1 > 0.0 {
-                base.push(format!("{:.0} - {:.0} damage", t.damage.0, t.damage.1));
-                base.push(format!("speed {:.2}", t.delay as f32 / 1000.0));
+                base.push(format!("{:.0} - {:.0} Damage", t.damage.0, t.damage.1));
+                base.push(format!("Speed {:.2}", t.delay as f32 / 1000.0));
             } else if t.armor > 0 {
-                base.push(format!("{} armor", t.armor));
+                base.push(format!("{} Armor", t.armor));
             }
         }
         let power = self.player.power.kind;
@@ -969,6 +1017,9 @@ impl Game {
             favourite,
             worn,
             seen_only,
+            slot_text: t.map_or("", |t| inventory_text(t.inventory_type)).to_owned(),
+            kind: t.map_or("", |t| kind_text(t.class, t.subclass)).to_owned(),
+            durability: t.map_or(0, |t| t.durability),
             base,
             own,
             bonus,
