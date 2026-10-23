@@ -1,11 +1,12 @@
-﻿//! `survivor-data <mangos.sqlite> --schema <table>`: print a table's columns.
+//! `survivor-data <mangos.sqlite> --schema <table>`: print a table's columns.
 //! `survivor-data <mangos.sqlite> <wow Data dir> <out dir>`: write the TSV files survivor-server
 //! loads, from vmangos's world database at patch 1.12:
 //!
 //! - `creatures.tsv`: the hostile and neutral creatures spawned in Tirisfall Glades, by template;
 //! - `spawns.tsv`: where each of them stands;
 //! - `start_items.tsv` and `items.tsv`: each Forsaken class's starting gear.
-//! - `loot.tsv`: what those creatures drop, with the reference tables they name.
+//! - `loot.tsv`: what those creatures drop, with the reference tables they name;
+//! - `shop.tsv`: the innkeepers' food and drink, by the level each sells from.
 //!
 //! - `npcs.tsv`: the friendly people of the safe towns (`survivor_server::town`), quest givers
 //!   among them; `quests.tsv`: their kill quests, and their gather quests;
@@ -807,6 +808,9 @@ fn export_talents(chain: &mut benilla_formats::Chain, out: &Path) -> Result<()> 
     Ok(())
 }
 
+/// Innkeeper Renee, Brill's: her wares are every innkeeper's (`shop.tsv`).
+const INNKEEPER: i64 = 5688;
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(db) = args.first() else {
@@ -1073,6 +1077,27 @@ fn main() -> Result<()> {
     std::fs::write(out.join("creatures.tsv"), creatures)?;
     let loot_items = export_loot(&conn, &used, out)?;
 
+    // The innkeepers' food and drink: Innkeeper Renee's 1.12 list, with the level each may be
+    // bought from (its required level, at least 1).
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT v.item, MAX(i.required_level, 1) FROM npc_vendor v
+         JOIN item_template i ON i.entry = v.item
+         WHERE v.entry = ?1 AND i.patch = (SELECT MAX(patch) FROM item_template u
+                                           WHERE u.entry = i.entry AND u.patch <= ?2)
+         ORDER BY 2, 1",
+    )?;
+    let mut shop = String::from("item	level
+");
+    let mut shop_items = Vec::new();
+    for r in stmt.query_map(rusqlite::params![INNKEEPER, PATCH], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+    })? {
+        let (item, level) = r?;
+        shop_items.push(item);
+        writeln!(shop, "{item}	{level}")?;
+    }
+    std::fs::write(out.join("shop.tsv"), shop)?;
+
     // Starting gear: every Forsaken class's rows, and the items they name.
     let mut stmt = conn.prepare(
         "SELECT class, itemid, amount FROM playercreateinfo_item WHERE race = ?1 ORDER BY class",
@@ -1081,6 +1106,7 @@ fn main() -> Result<()> {
     // The quests' reward items, beside the starting gear and the chests'.
     let mut items_used = rewards_used;
     items_used.extend(loot_items);
+    items_used.extend(shop_items);
     for row in stmt.query_map([UNDEAD], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
     })? {

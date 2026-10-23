@@ -107,6 +107,7 @@ impl Game {
             || !self.walked
             || self.armory_open.is_some()
             || self.spirit_open.is_some()
+            || self.shop_open.is_some()
         {
             return;
         }

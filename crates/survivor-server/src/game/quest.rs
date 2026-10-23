@@ -162,6 +162,7 @@ impl Game {
             // A trainer's or the spirit healer's window open: the giver waits for it to close.
             || self.trainer_open.is_some()
             || self.spirit_open.is_some()
+            || self.shop_open.is_some()
         {
             return;
         }

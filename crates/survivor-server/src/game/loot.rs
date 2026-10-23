@@ -159,7 +159,7 @@ impl Game {
     }
 
     /// Take `count` of `entry` out of the backpack, its last stacks first.
-    fn remove_from_pack(&mut self, entry: u32, mut count: u32) {
+    pub(super) fn remove_from_pack(&mut self, entry: u32, mut count: u32) {
         while count > 0 {
             let Some(i) = self.pack.iter().rposition(|p| p.entry == entry && is_backpack(p.field))
             else {
@@ -237,6 +237,6 @@ impl Game {
     }
 }
 
-fn is_backpack(field: u16) -> bool {
+pub(super) fn is_backpack(field: u16) -> bool {
     field >= f::PLAYER_INV_SLOT_HEAD && BACKPACK.contains(&((field - f::PLAYER_INV_SLOT_HEAD) / 2))
 }

@@ -122,6 +122,10 @@ struct Walk {
     wait_until: Instant,
 }
 
+/// Town people standing elsewhere than the world data puts them: `(entry, [x, y, z, facing])`.
+/// Joshua Kien, Deathknell's innkeeper here, out in front of his house's door, facing the road.
+const MOVED: &[(u32, [f32; 4])] = &[(2115, [1863.0, 1584.0, 95.2, 1.57])];
+
 /// The town's people from the world data, with guids clear of the creatures'. A guard with a
 /// beat starts at its path's first point.
 pub(crate) fn npcs(data: &crate::data::WorldData, now: Instant) -> Vec<Npc> {
@@ -143,11 +147,15 @@ pub(crate) fn npcs(data: &crate::data::WorldData, now: Instant) -> Vec<Npc> {
                 leg: None,
                 next_swing: now,
             });
+            let (pos, facing) = match MOVED.iter().find(|m| m.0 == s.entry) {
+                Some(&(_, [x, y, z, o])) => ([x, y, z], o),
+                None => (pos, s.facing),
+            };
             Npc {
                 guid: 0xF130_0000_0000_0000 | u64::from(s.entry) << 24 | 0x80_0000 | i as u64,
                 entry: s.entry,
                 pos,
-                facing: s.facing,
+                facing,
                 beat: walk,
                 guard,
             }

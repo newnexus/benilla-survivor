@@ -349,6 +349,8 @@ pub(crate) struct WorldData {
     pub(crate) items: HashMap<u32, ItemTemplate>,
     /// `(class, item, amount)`.
     pub(crate) start_items: Vec<(u8, u32, u32)>,
+    /// The innkeepers' wares (`shop.tsv`): item and the camp level it sells from.
+    pub(crate) shop: Vec<(u32, u32)>,
     /// Loot tables by `(reference, id)`: a creature's by its entry, a reference table by its id.
     pub(crate) loot: HashMap<(bool, u32), Vec<LootRow>>,
     pub(crate) spells: HashMap<u32, SpellInfo>,
@@ -648,6 +650,9 @@ impl WorldData {
                 min: num(r.get(4)),
                 max: num(r.get(5)),
             });
+        }
+        for r in rows(&dir, "shop.tsv") {
+            d.shop.push((num(r.first()), num(r.get(1))));
         }
         for r in rows(&dir, "start_items.tsv") {
             d.start_items

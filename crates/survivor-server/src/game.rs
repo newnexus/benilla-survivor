@@ -27,6 +27,7 @@ mod rotation;
 mod runes;
 mod save;
 mod spawner;
+mod shop;
 mod spirit;
 mod talents;
 mod trainer;
@@ -408,6 +409,9 @@ pub(crate) struct Game {
     /// The trainer's window, open (its board id), or closed by the player until they walk off.
     trainer_open: Option<u64>,
     trainer_closed: bool,
+    /// The innkeeper's window on screen, and closed by the player while still by them.
+    shop_open: Option<u64>,
+    shop_closed: bool,
     armory_shown: HashSet<usize>,
     /// The starting gear per equipment slot (its entry and item guid), and its weapon: what a
     /// run ends back in.
@@ -602,6 +606,8 @@ impl Game {
             owned: std::collections::HashMap::new(),
             trainer_open: None,
             trainer_closed: false,
+            shop_open: None,
+            shop_closed: false,
             armory_shown: HashSet::new(),
             start_visible,
             worn_items: std::collections::HashMap::new(),
@@ -710,6 +716,7 @@ impl Game {
         self.take_spirit_action();
         self.take_queue_move();
         self.take_trainer_action();
+        self.take_shop_action();
         self.pause_for_menu();
         if self.paused() {
             return;
@@ -730,6 +737,7 @@ impl Game {
         self.open_armory_nearby();
         self.open_spirit_nearby(now);
         self.open_trainer_nearby(now);
+        self.open_shop_nearby(now);
         self.walk_beats(now);
         self.guard_posts(now);
         self.update_npcs(now);
