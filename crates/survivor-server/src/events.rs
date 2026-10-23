@@ -444,3 +444,17 @@ pub const EVENTS: &[Event] = &[
         ],
     },
 ];
+
+/// The icons of the trades `trainer` teaches (`Interface\Icons\` names, the trade skills' own),
+/// shown over their head; none for anyone else.
+pub fn profession_icons(trainer: u32) -> &'static [&'static str] {
+    match trainer {
+        4598 => &["Trade_Mining", "Trade_BlackSmithing"],
+        3523 => &["Trade_Tailoring"],
+        5695 => &["Trade_Engraving"],
+        6289 => &["INV_Misc_Pelt_Wolf_01", "INV_Misc_ArmorKit_17"],
+        4552 => &["INV_Misc_Food_15"],
+        5759 => &["Spell_Holy_SealOfSacrifice"],
+        _ => &[],
+    }
+}
