@@ -18,8 +18,16 @@ pub struct Event {
     pub ambush: &'static [(u32, u32)],
     /// What is shouted as the attack comes.
     pub ambush_line: &'static str,
+    /// What the trainer says while the player holds the attack off, and while walking home.
+    pub defend_lines: &'static [&'static str],
+    pub escort_lines: &'static [&'static str],
+    /// What they say as they run off home at the barrier.
+    pub home_line: &'static str,
     pub steps: [Step; 3],
 }
+
+/// How long the second quest's defence lasts (s).
+pub const DEFEND_SECS: u64 = 60;
 
 /// One quest of the chain.
 pub struct Step {
@@ -68,6 +76,19 @@ pub const EVENTS: &[Event] = &[
         home: [1872.0, 1604.0, 94.0, 3.1],
         ambush: &[(NIGHT_WEB_MATRIARCH, 1), (YOUNG_NIGHT_WEB_SPIDER, 5)],
         ambush_line: "The Night Web Matriarch comes for the noise!",
+        defend_lines: &[
+            "Mind the big one, she spits!",
+            "Keep 'em off me back, lad!",
+            "Hah! Another one squashed!",
+            "Nearly done, hold on!",
+        ],
+        escort_lines: &[
+            "Watch the ceiling, they drop down on you.",
+            "Can't wait to smell a forge again.",
+            "This hollow gave good copper once. Bad luck to it now.",
+            "Keep walking, I'm right behind.",
+        ],
+        home_line: "There's the flames! I'll find me own way to the forge from here. Come see me, $N!",
         steps: [
             Step {
                 title: "Deep in the Hollow",
@@ -90,10 +111,10 @@ pub const EVENTS: &[Event] = &[
                     but mark me, that racket'll wake her. The big one. The Matriarch. She nests \
                     below and she don't like visitors.$B$BWhen she comes, you put her down. I'll \
                     keep me back to the wall.",
-                objectives: "Kill the Night Web Matriarch when she comes for Brom.",
+                objectives: "Defend Brom Killian for a minute while the brood attacks.",
                 done: "Hah! Squashed like a cave beetle. You've a fighter's arm, $N.",
-                kill: (NIGHT_WEB_MATRIARCH, 1),
-                objective: "Night Web Matriarch slain",
+                kill: (4598, 1),
+                objective: "Defend Brom from the brood",
                 xp: 350,
                 money: 75,
             },
@@ -120,6 +141,19 @@ pub const EVENTS: &[Event] = &[
         home: [1866.0, 1620.0, 95.7, 3.6],
         ambush: &[(SCARLET_CONVERT, 4), (SCARLET_INITIATE, 2)],
         ambush_line: "The camp's bell rings! The Scarlet Crusade comes running!",
+        defend_lines: &[
+            "Oh dear, oh dear, there are so many of them!",
+            "Mind my good coat!",
+            "Behind you! No, the other behind!",
+            "Is it nearly over? It must be nearly over.",
+        ],
+        escort_lines: &[
+            "My legs have quite forgotten how to walk.",
+            "Do you think they have decent wool in Deathknell?",
+            "If anyone asks, I was never in that cage.",
+            "Lovely evening for not being purified.",
+        ],
+        home_line: "Ah, Deathknell! I'll go and find a corner to set up shop. Do visit, $N!",
         steps: [
             Step {
                 title: "A Tailor in a Cage",
@@ -142,10 +176,10 @@ pub const EVENTS: &[Event] = &[
                     camp's bell. When the door opens, the bell rings, and the whole flock comes \
                     running with their torches.$B$BSo, open it, and then do whatever it is you do. \
                     Loudly.",
-                objectives: "Open the cage and beat off the Scarlet Crusade's rush.",
+                objectives: "Defend Bowen Brisboise for a minute while the Scarlet Crusade rushes the cage.",
                 done: "Well. That was very loud. Thank you, I think.",
-                kill: (SCARLET_CONVERT, 4),
-                objective: "Scarlet attackers beaten off",
+                kill: (3523, 1),
+                objective: "Defend Bowen from the Crusade",
                 xp: 350,
                 money: 75,
             },
@@ -172,6 +206,19 @@ pub const EVENTS: &[Event] = &[
         home: [1858.0, 1632.0, 95.7, 4.3],
         ambush: &[(SCARLET_MISSIONARY, 2), (SCARLET_WARRIOR, 3)],
         ambush_line: "\"Heretic! The purification is not finished!\"",
+        defend_lines: &[
+            "The rod remembers. Burn, zealots!",
+            "Their prayers are louder than their blades.",
+            "Do not let them reach the rope!",
+            "Steady. The runes are holding.",
+        ],
+        escort_lines: &[
+            "My knees will remember that tower for years.",
+            "The dust out here hums. Do you hear it?",
+            "Walk faster. Missionaries are patient.",
+            "Your Deathknell had better have a quiet corner.",
+        ],
+        home_line: "Your barrier. I can feel it from here. I will find my own place inside. Come and see me, $N.",
         steps: [
             Step {
                 title: "The Kneeling Heretic",
@@ -192,10 +239,10 @@ pub const EVENTS: &[Event] = &[
                 details: "Now cut the ropes. Quickly, before the missionaries come back with \
                     their candles and their prayers. They will come back. They always come \
                     back.$B$BWhen they do, I will do what I can with the rod. You do the rest.",
-                objectives: "Cut Vance free and defeat the missionaries who come for him.",
+                objectives: "Defend Vance Undergloom for a minute while the missionaries try to finish what they began.",
                 done: "Quiet again. I had forgotten what quiet sounded like.",
-                kill: (SCARLET_MISSIONARY, 2),
-                objective: "Scarlet missionaries defeated",
+                kill: (5695, 1),
+                objective: "Defend Vance from the zealots",
                 xp: 350,
                 money: 75,
             },
@@ -221,6 +268,19 @@ pub const EVENTS: &[Event] = &[
         home: [1878.0, 1592.0, 90.5, 2.9],
         ambush: &[(CURSED_DARKHOUND, 1), (RAGGED_SCAVENGER, 5)],
         ambush_line: "The pack is back, and the alpha leads it!",
+        defend_lines: &[
+            "Here they come! Watch the big one!",
+            "Keep them off my leg!",
+            "That's it! Make them think twice!",
+            "The alpha's circling, don't lose it!",
+        ],
+        escort_lines: &[
+            "Slow, slow. This leg's not what it was.",
+            "Hear them? They're following us still.",
+            "Good hides on those wolves. Shame about the teeth.",
+            "Not far now, I can smell the smoke.",
+        ],
+        home_line: "That's the barrier! I can limp the rest of the way. Come find me, $N.",
         steps: [
             Step {
                 title: "Among the Wolves",
@@ -240,10 +300,10 @@ pub const EVENTS: &[Event] = &[
                 details: "Hear that? They've circled round. And that one howling, that's no \
                     scavenger. That's the alpha, the cursed hound that leads them.$B$BIt'll come \
                     straight for the one who's bleeding. That's me. Stand between us.",
-                objectives: "Kill the cursed alpha when the pack comes back for Rand.",
+                objectives: "Defend Rand Rhobart for a minute while the pack comes back for him.",
                 done: "Big brute. That hide alone would keep a tanner busy a week.",
-                kill: (CURSED_DARKHOUND, 1),
-                objective: "Cursed alpha slain",
+                kill: (6289, 1),
+                objective: "Defend Rand from the pack",
                 xp: 350,
                 money: 75,
             },
@@ -268,6 +328,19 @@ pub const EVENTS: &[Event] = &[
         home: [1850.0, 1590.0, 93.2, 0.3],
         ambush: &[(ROTTING_DEAD, 5)],
         ambush_line: "The dead smell the cooking fire!",
+        defend_lines: &[
+            "Shoo! Shoo! Out of my kitchen!",
+            "Don't you dare knock over the pot!",
+            "More of them? Goodness, it's a very good broth.",
+            "Nearly there, dear, keep them back!",
+        ],
+        escort_lines: &[
+            "Careful with the pot, it's still warm.",
+            "I'll need a proper hearth, mind.",
+            "Everyone in Deathknell looks so thin.",
+            "You'll be my first guest, of course.",
+        ],
+        home_line: "Here we are! I'll carry the pot the rest of the way myself. Come by for supper, $N!",
         steps: [
             Step {
                 title: "The Larder",
@@ -287,10 +360,10 @@ pub const EVENTS: &[Event] = &[
                 details: "Ah. I was afraid of this. The smell carries, and the mindless ones \
                     outside still remember being hungry. They'll be at the door in a moment.$B$B\
                     Keep them off my kitchen, dear. I'll keep stirring.",
-                objectives: "Defend Eunice's farmhouse from the rotting dead.",
+                objectives: "Defend Eunice Burch's kitchen for a minute while the dead come for the smell.",
                 done: "Not a drop spilled. You'd make a fine kitchen guard.",
-                kill: (ROTTING_DEAD, 5),
-                objective: "Rotting dead driven off",
+                kill: (4552, 1),
+                objective: "Defend Eunice's kitchen",
                 xp: 350,
                 money: 75,
             },
@@ -316,6 +389,19 @@ pub const EVENTS: &[Event] = &[
         home: [1840.0, 1615.0, 95.7, 6.0],
         ambush: &[(RATTLECAGE_SKELETON, 5)],
         ambush_line: "Skeletons break through the boards!",
+        defend_lines: &[
+            "Keep them away from the cot!",
+            "Rattling things. Hold them back!",
+            "He's still breathing. Keep going!",
+            "Just a little longer!",
+        ],
+        escort_lines: &[
+            "Easy, soldier. Nearly there.",
+            "Don't jostle him, please.",
+            "When we're inside I'll teach you a proper bandage.",
+            "Every step's a step closer.",
+        ],
+        home_line: "The barrier! I can manage him from here. Come and learn your bandages, $N.",
         steps: [
             Step {
                 title: "Linen and Mercy",
@@ -335,10 +421,10 @@ pub const EVENTS: &[Event] = &[
                 details: "Do you hear that rattling? The Rattlecages. They followed the smell of \
                     the wound. They'll come through the walls of this old place like they're \
                     paper.$B$BI can't move him yet. Hold them off.",
-                objectives: "Defend Nurse Neela's ward from the Rattlecage Skeletons.",
+                objectives: "Defend Nurse Neela's ward for a minute while the skeletons break in.",
                 done: "Bones everywhere. I'll be sweeping for a week. Thank you.",
-                kill: (RATTLECAGE_SKELETON, 5),
-                objective: "Rattlecage Skeletons destroyed",
+                kill: (5759, 1),
+                objective: "Defend Neela's ward",
                 xp: 350,
                 money: 75,
             },

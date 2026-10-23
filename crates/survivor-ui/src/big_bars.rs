@@ -15,6 +15,8 @@ const NAME: f32 = 2.6;
 const HOLD: f32 = 0.6;
 const DRAIN: f32 = 0.6;
 const RED: Color = Color::srgb(0.62, 0.06, 0.05);
+/// Someone to protect: a trainer defended or escorted.
+const GREEN: Color = Color::srgb(0.15, 0.6, 0.1);
 const LOST: Color = Color::srgba(0.95, 0.82, 0.5, 0.9);
 const BACK: Color = Color::srgba(0.02, 0.01, 0.01, 0.75);
 const EDGE: Color = Color::srgba(0.45, 0.38, 0.25, 0.9);
@@ -138,7 +140,7 @@ fn show_bars(
                             )
                         };
                         lost = bar.spawn(inner(LOST)).id();
-                        fill = bar.spawn(inner(RED)).id();
+                        fill = bar.spawn(inner(if b.friendly { GREEN } else { RED })).id();
                     });
                 })
                 .id();

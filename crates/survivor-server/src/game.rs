@@ -791,9 +791,21 @@ impl Game {
                     name: t.name.clone(),
                     health: m.health,
                     max: m.max_health,
+                    friendly: false,
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
+        // The trainer defended or escorted, first.
+        let mut bars = bars;
+        if let Some((guid, name)) = self.event_focus() {
+            bars.insert(0, crate::big_bars::Bar {
+                guid,
+                name,
+                health: 1,
+                max: 1,
+                friendly: true,
+            });
+        }
         crate::big_bars::set(bars);
     }
 

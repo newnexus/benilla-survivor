@@ -524,6 +524,7 @@ impl Game {
         self.shift_hearth(by);
         self.shift_gathering(by);
         self.shift_runes(by);
+        self.shift_events(by);
         let p = &mut self.player;
         p.in_combat_until += by;
         p.next_swing += by;

@@ -166,6 +166,8 @@ pub mod big_bars {
         pub name: String,
         pub health: u32,
         pub max: u32,
+        /// Someone to protect (a trainer defended or escorted), drawn in green.
+        pub friendly: bool,
     }
 
     static BARS: Mutex<Vec<Bar>> = Mutex::new(Vec::new());

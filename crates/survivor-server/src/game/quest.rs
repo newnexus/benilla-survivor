@@ -341,7 +341,7 @@ impl Game {
 
     /// A quest text with WoW's macros filled in: `$N` the name, `$C` the class, `$R` the race,
     /// `$Gmale:female;` by gender, `$B` a line break.
-    fn fill(&self, text: &str) -> String {
+    pub(super) fn fill(&self, text: &str) -> String {
         let class = match self.player.class {
             1 => "Warrior",
             4 => "Rogue",
