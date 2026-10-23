@@ -133,3 +133,19 @@ fn barycentric(p: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> [f32; 3] {
     let wb = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / d;
     [wa, wb, 1.0 - wa - wb]
 }
+
+#[cfg(test)]
+mod event_heights {
+    /// Prints the terrain height under each profession trainer's spot and home. Needs the
+    /// install (`WOW_DATA`).
+    #[test]
+    #[ignore = "needs WOW_DATA"]
+    fn print_event_heights() {
+        let mut g = super::Ground::open();
+        for e in survivor_server::events::EVENTS {
+            for (what, p) in [("spot", e.spot), ("home", e.home)] {
+                println!("{} {what} {:?} -> {:?}", e.trainer, p, g.height(p[0], p[1]));
+            }
+        }
+    }
+}

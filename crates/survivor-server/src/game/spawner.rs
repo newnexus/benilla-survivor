@@ -176,7 +176,7 @@ impl Game {
 
     /// One creature of `entry` at `level` out of sight round the player, chasing; a boss when
     /// `boss` says how much bigger and which round.
-    fn spawn(&mut self, w: &mut Waves, entry: u32, level: u32, boss: Option<(f32, usize)>, now: Instant) {
+    pub(super) fn spawn(&mut self, w: &mut Waves, entry: u32, level: u32, boss: Option<(f32, usize)>, now: Instant) {
         // Our own handle on the shared world data, so `self` stays free to change.
         let data = std::sync::Arc::clone(&self.data);
         let Some(t) = data.creatures.get(&entry) else { return };

@@ -27,6 +27,7 @@ mod rotation;
 mod runes;
 mod save;
 mod spawner;
+mod events;
 mod shop;
 mod spirit;
 mod talents;
@@ -344,6 +345,10 @@ pub(crate) struct Game {
     /// Souls and coins loose in the world, the last orb's id, and the last tick's time.
     /// When the game menu stopped the world, while it is open.
     menu_paused: Option<Instant>,
+    /// A held trainer's window open on a run: the world stopped since then.
+    talk_paused: Option<Instant>,
+    /// The profession trainers' events.
+    events: events::Events,
     orbs: Vec<orbs::Loose>,
     next_orb: u64,
     /// The souls lying about the zone, made on the first tick.
@@ -569,6 +574,8 @@ impl Game {
             waves: None,
             countdown: None,
             menu_paused: None,
+            talk_paused: None,
+            events: events::Events::default(),
             orbs: Vec::new(),
             next_orb: 0,
             field_souls: Vec::new(),
@@ -749,6 +756,7 @@ impl Game {
         self.talk_nearby(now);
         self.publish_trails(now);
         self.tick_waves(now);
+        self.tick_events(now);
         self.player_attack(now);
         self.tick_spells(now);
         self.tick_meals(now);

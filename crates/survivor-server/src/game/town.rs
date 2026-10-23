@@ -91,14 +91,32 @@ pub(crate) struct Npc {
     beat: Option<Walk>,
     /// An entrance post's guard: it fights what comes too near the barrier.
     guard: Option<Guard>,
+    /// A trainer walking home with the player: the leg under way.
+    pub(super) lead: Option<Path>,
 }
 
 impl Npc {
+    /// Someone standing at `pos`, no beat, no post.
+    pub(super) fn standing(guid: u64, entry: u32, pos: [f32; 3], facing: f32) -> Self {
+        Self {
+            guid,
+            entry,
+            pos,
+            facing,
+            beat: None,
+            guard: None,
+            lead: None,
+        }
+    }
+
+    pub(super) fn set_facing(&mut self, facing: f32) {
+        self.facing = facing;
+    }
+
     pub(crate) fn here(&self, now: Instant) -> [f32; 3] {
         let leg = self
-            .beat
-            .as_ref()
-            .and_then(|w| w.leg)
+            .lead
+            .or_else(|| self.beat.as_ref().and_then(|w| w.leg))
             .or_else(|| self.guard.as_ref().and_then(|g| g.leg));
         leg.map_or(self.pos, |leg| leg.at(now))
     }
@@ -158,6 +176,7 @@ pub(crate) fn npcs(data: &crate::data::WorldData, now: Instant) -> Vec<Npc> {
                 facing,
                 beat: walk,
                 guard,
+                lead: None,
             }
         })
         .collect()
@@ -198,6 +217,7 @@ impl Game {
             self.reset_character(meta_next(self.meta.level));
         }
         self.send_money();
+        self.add_event_trainers(Instant::now());
         self.wear_loadout();
         self.restore_bag();
         self.publish_chest_glow();
@@ -255,6 +275,7 @@ impl Game {
         self.player.xp = 0;
         self.reset_character(self.curve.next_level(1));
         self.grant_owned();
+        self.roll_events(now);
         eprintln!("survivor: run started");
         self.send(opcode::SMSG_NOTIFICATION, &packets::notification("The run begins: level 1"));
     }
@@ -269,6 +290,7 @@ impl Game {
             .map_or(0.0, |w| w.survived(now));
         let souls = self.run_souls;
         self.mode = Mode::Town(i);
+        self.end_run_events(died, now);
         self.waves = None;
         self.clear_spawned(now);
         self.end_orbs(died);

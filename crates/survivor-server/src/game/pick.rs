@@ -59,13 +59,13 @@ const BOOST_SHARE: f32 = 0.5;
 
 impl Game {
     pub(crate) fn paused(&self) -> bool {
-        self.pick.is_some() || self.menu_paused.is_some()
+        self.pick.is_some() || self.menu_paused.is_some() || self.talk_paused.is_some()
     }
 
     /// The game menu opening stops the world as a pick does; closing it lets it run on.
     pub(super) fn pause_for_menu(&mut self) {
         let open = crate::menu_pause::open();
-        if open && self.menu_paused.is_none() && self.pick.is_none() {
+        if open && self.menu_paused.is_none() && self.pick.is_none() && self.talk_paused.is_none() {
             let now = Instant::now();
             eprintln!("survivor: paused for the game menu");
             self.menu_paused = Some(now);
@@ -480,7 +480,7 @@ impl Game {
     }
 
     /// The world stopped at `paused_at` runs on from `now`.
-    fn thaw(&mut self, paused_at: Instant, now: Instant) {
+    pub(super) fn thaw(&mut self, paused_at: Instant, now: Instant) {
         self.arrange_bars(false, None);
         self.shift_timers(now.saturating_duration_since(paused_at));
         // The client's buff timers ran on through the pause.

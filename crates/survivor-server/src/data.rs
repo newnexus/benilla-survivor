@@ -569,6 +569,30 @@ impl WorldData {
                     .unwrap_or_default(),
             });
         }
+        // The profession trainers' chains (`crate::events`), each step after the one before.
+        for (e, ev) in crate::events::EVENTS.iter().enumerate() {
+            for (k, s) in ev.steps.iter().enumerate() {
+                let id = crate::events::quest_id(e, k + 1);
+                d.quests.push(Quest {
+                    id,
+                    level: 3,
+                    min_level: 1,
+                    prev: if k == 0 { 0 } else { id - 1 },
+                    giver: ev.trainer,
+                    ender: ev.trainer,
+                    xp: s.xp,
+                    money: s.money,
+                    title: s.title.to_owned(),
+                    details: s.details.to_owned(),
+                    objectives: s.objectives.to_owned(),
+                    offer_text: s.done.to_owned(),
+                    end_text: String::new(),
+                    kills: [s.kill, (0, 0), (0, 0), (0, 0)],
+                    objective_texts: [s.objective.to_owned(), String::new(), String::new(), String::new()],
+                    rewards: Vec::new(),
+                });
+            }
+        }
         // Only the objects a quest wants.
         for r in rows(&dir, "gathers.tsv") {
             let entry: u32 = num(r.get(1));
@@ -723,7 +747,13 @@ impl WorldData {
         // (`UNIT_NPC_FLAG_QUESTGIVER`), vendors and trainers stay plain townsfolk for now.
         let talks: std::collections::HashSet<u32> =
             d.quests.iter().flat_map(|q| [q.giver, q.ender]).collect();
-        let people: std::collections::HashSet<u32> = d.npcs.iter().map(|n| n.0.entry).collect();
+        // The town's people, and the profession trainers held out in the zone, stay friendly.
+        let people: std::collections::HashSet<u32> = d
+            .npcs
+            .iter()
+            .map(|n| n.0.entry)
+            .chain(crate::events::trainers())
+            .collect();
         let bosses: std::collections::HashSet<u32> =
             crate::waves::BOSSES.iter().map(|b| b.0).collect();
         for t in d.creatures.values_mut() {

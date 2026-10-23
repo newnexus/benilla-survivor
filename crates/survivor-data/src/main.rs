@@ -1035,6 +1035,11 @@ fn main() -> Result<()> {
     export_talents(&mut chain, out)?;
     let mut rewards_used = std::collections::BTreeSet::new();
     let quests = export_quests(&conn, out, &npcs_used, &used, &gathers, &mut rewards_used)?;
+    // The profession trainers held out in the zone (`survivor_server::events`): their own
+    // quests only, so they join after the quests are picked.
+    for e in survivor_server::events::trainers() {
+        npcs_used.insert(i64::from(e));
+    }
     if let Some(dir) = std::env::var_os("VOICEOVER_DIR") {
         let lines = copy_quest_voices(Path::new(&dir), out)?;
         println!("survivor-data: {lines} quest voice lines");

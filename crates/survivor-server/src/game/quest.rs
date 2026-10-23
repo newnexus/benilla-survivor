@@ -42,6 +42,20 @@ impl Game {
         self.npcs.iter().find(|n| n.guid == guid).map(|n| n.entry)
     }
 
+    /// Handed in.
+    pub(super) fn quest_done(&self, id: u32) -> bool {
+        self.quests.done.contains(&id)
+    }
+
+    pub(super) fn quest_in_log(&self, id: u32) -> bool {
+        self.slot_of(id).is_some()
+    }
+
+    /// In the log with everything it wants.
+    pub(super) fn quest_finished_in_log(&self, id: u32) -> bool {
+        self.quests.slots.iter().flatten().any(|a| a.id == id && self.finished(a))
+    }
+
     fn slot_of(&self, id: u32) -> Option<usize> {
         self.quests.slots.iter().position(|s| s.is_some_and(|a| a.id == id))
     }
@@ -52,7 +66,8 @@ impl Game {
     }
 
     /// What `entry` offers now: every quest of theirs not done and not in the log. No chain and
-    /// no level holds one back: a survivor takes them all at once.
+    /// no level holds one back: a survivor takes them all at once. A profession trainer's chain
+    /// goes one step at a time.
     fn available(&self, entry: u32) -> Vec<&Quest> {
         self.data
             .quests
@@ -60,6 +75,7 @@ impl Game {
             .filter(|q| {
                 q.giver == entry && !self.quests.done.contains(&q.id) && self.slot_of(q.id).is_none()
             })
+            .filter(|q| q.id < 90_000 || q.prev == 0 || self.quests.done.contains(&q.prev))
             .collect()
     }
 
@@ -154,8 +170,9 @@ impl Game {
 
     /// In town, a quest giver within reach speaks up once, until the player walks off.
     pub(super) fn talk_nearby(&mut self, now: std::time::Instant) {
-        if self.in_run()
-            || self.player.dead_until.is_some()
+        // On a run, only a held profession trainer speaks.
+        let run = self.in_run();
+        if self.player.dead_until.is_some()
             || self.paused()
             || !self.walked
             || self.armory_open.is_some()
@@ -184,12 +201,27 @@ impl Game {
             .npcs
             .iter()
             .filter(|n| self.data.creatures[&n.entry].npc_flags & NPC_QUESTGIVER != 0)
+            .filter(|n| !run || self.event_trainer_out(n.entry))
             .map(|n| (dist2d(n.here(now), me), n.guid))
             .filter(|&(d, _)| d <= TALK_RANGE)
             .min_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((_, guid)) = near {
             if self.quest_hello(guid) {
                 self.talked = Some(guid);
+                // Out on a run the world stops while they talk.
+                if run {
+                    self.talk_paused = Some(now);
+                    self.freeze(now);
+                }
+            }
+        }
+    }
+
+    /// A window that stopped the world closed: it runs on.
+    fn end_talk_pause(&mut self) {
+        if self.open_panel.is_none() {
+            if let Some(at) = self.talk_paused.take() {
+                self.thaw(at, std::time::Instant::now());
             }
         }
     }
@@ -201,6 +233,7 @@ impl Game {
             quest_board::clear();
             self.talked = None;
         }
+        self.end_talk_pause();
     }
 
     /// `CMSG_QUESTGIVER_QUERY_QUEST`: a row of the list was picked.
@@ -281,6 +314,11 @@ impl Game {
     /// The window's answer: Accept takes the quest (or hands it in), the X closes it.
     pub(super) fn take_panel_answer(&mut self) {
         let Some((id, answer)) = quest_board::take_answer() else { return };
+        self.answer_panel(id, answer);
+        self.end_talk_pause();
+    }
+
+    fn answer_panel(&mut self, id: u64, answer: Answer) {
         let Some((open, guid)) = self.open_panel else { return };
         if id != open {
             return;
@@ -392,6 +430,7 @@ impl Game {
         self.send(opcode::SMSG_QUESTGIVER_QUEST_COMPLETE, &quest::complete(&q, q.xp));
         self.grant_meta_xp(q.xp);
         self.send_giver_statuses();
+        self.event_quest_done(id);
         self.save();
         // The next of the chain, or another finished quest, straight away.
         self.quest_hello(guid);
@@ -456,6 +495,10 @@ impl Game {
         let mut v = Vec::new();
         for a in self.quests.slots.iter().flatten() {
             let Some(q) = self.quest(a.id) else { continue };
+            // A profession trainer's chain sends its own.
+            if q.id >= 90_000 {
+                continue;
+            }
             for (k, &(entry, need)) in q.kills.iter().enumerate() {
                 let creature = entry != 0 && entry & crate::data::OBJECTIVE_GAMEOBJECT == 0;
                 if creature && a.counts[k] < need && self.data.creatures.contains_key(&entry) {
