@@ -264,8 +264,10 @@ fn spawn_window(
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
+                // On the left of the screen, as the quest giver's talk page.
+                justify_content: JustifyContent::FlexStart,
                 align_items: AlignItems::Center,
+                padding: UiRect::left(Val::Vh(3.0)),
                 ..default()
             },
             GlobalZIndex(crate::SCREEN_Z - 20),
