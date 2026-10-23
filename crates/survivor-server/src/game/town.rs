@@ -191,6 +191,7 @@ impl Game {
         }
         self.send_money();
         self.wear_loadout();
+        self.restore_bag();
         self.publish_chest_glow();
         self.send_talents();
     }
@@ -273,6 +274,7 @@ impl Game {
         self.run_found = 0;
         self.send_money();
         self.end_run_gear(died);
+        self.end_run_loot(died);
         self.publish_chest_glow();
         // An open level-up pick goes with the run.
         if self.pick.is_some() {

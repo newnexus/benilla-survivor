@@ -42,6 +42,7 @@ mod big_bars;
 mod run_summary;
 mod trainer;
 mod queue;
+mod loot_feed;
 mod settings;
 
 /// The level-up screen.
@@ -60,7 +61,7 @@ impl Plugin for SurvivorUiPlugin {
             .add_systems(Update, follow_aim)
             .add_systems(Update, preload_library)
             .add_plugins((queue::plugin, barrier::plugin, haven::plugin, countdown::plugin, run_clock::plugin, mob_bars::plugin, menu_pause::plugin, quest_frame::plugin, quest_panel::plugin, chest_glow::plugin, armory::plugin, orbs::plugin, trails::plugin))
-            .add_plugins((talents::plugin, hearth::plugin, spirit::plugin, big_bars::plugin, run_summary::plugin, trainer::plugin))
+            .add_plugins((talents::plugin, hearth::plugin, spirit::plugin, big_bars::plugin, run_summary::plugin, trainer::plugin, loot_feed::plugin))
             .add_systems(Update, shrink_cards);
     }
 }

@@ -224,6 +224,36 @@ pub mod run_summary {
     }
 }
 
+/// Loot picked up, for the screen's feed over the backpack.
+pub mod loot_feed {
+    use std::sync::Mutex;
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Pickup {
+        pub entry: u32,
+        pub count: u32,
+        /// `ItemDisplayInfo.dbc` row, for its icon.
+        pub display: u32,
+        /// 0 poor ... 5 legendary.
+        pub quality: u32,
+        pub name: String,
+    }
+
+    /// Picked up, and whether some or all of it did not fit (the backpack full).
+    static FEED: Mutex<Vec<(Pickup, bool)>> = Mutex::new(Vec::new());
+
+    /// Everything picked up since the last call, oldest first.
+    pub fn take() -> Vec<(Pickup, bool)> {
+        FEED.lock().map(|mut f| std::mem::take(&mut *f)).unwrap_or_default()
+    }
+
+    pub(crate) fn post(p: Pickup, full: bool) {
+        if let Ok(mut f) = FEED.lock() {
+            f.push((p, full));
+        }
+    }
+}
+
 /// The player's purse, copper, for the screen's corner.
 pub mod purse {
     use std::sync::atomic::{AtomicU32, Ordering};

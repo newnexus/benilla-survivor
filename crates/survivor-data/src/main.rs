@@ -5,6 +5,7 @@
 //! - `creatures.tsv`: the hostile and neutral creatures spawned in Tirisfall Glades, by template;
 //! - `spawns.tsv`: where each of them stands;
 //! - `start_items.tsv` and `items.tsv`: each Forsaken class's starting gear.
+//! - `loot.tsv`: what those creatures drop, with the reference tables they name.
 //!
 //! - `npcs.tsv`: the friendly people of the safe towns (`survivor_server::town`), quest givers
 //!   among them; `quests.tsv`: their kill quests, and their gather quests;
@@ -264,6 +265,68 @@ fn export_spells(
 
 /// Chest gear goes up to this wearing level: Tirisfall's own.
 const GEAR_MAX_LEVEL: i64 = 14;
+
+/// `loot.tsv`: the loot tables of `creatures` (by creature entry, owner `c<entry>`) and every
+/// reference table they reach (owner `r<id>`), at patch 1.12. A row is `owner item chance group
+/// min max`; a reference row has `item` the table and a negative `min`, `max` its times. Quest
+/// items (a negative chance) are left out: the survivor's quests are its own. Returns the items.
+fn export_loot(
+    conn: &Connection,
+    creatures: &std::collections::BTreeSet<i64>,
+    out: &Path,
+) -> Result<std::collections::BTreeSet<i64>> {
+    let rows = |table: &str, entry: i64| -> Result<Vec<(i64, f64, i64, i64, i64)>> {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT item, ChanceOrQuestChance, groupid, mincountOrRef, maxcount FROM {table}
+             WHERE entry = ?1 AND patch_min <= ?2 AND patch_max >= ?2 AND condition_id = 0
+             ORDER BY groupid, item"
+        ))?;
+        let found = stmt
+            .query_map(rusqlite::params![entry, PATCH], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(found)
+    };
+    let mut tsv = String::from("owner\titem\tchance\tgroup\tmin\tmax\n");
+    let mut items = std::collections::BTreeSet::new();
+    let mut refs: Vec<i64> = Vec::new();
+    let mut done_refs = std::collections::BTreeSet::new();
+    let mut write = |owner: String, list: Vec<(i64, f64, i64, i64, i64)>, refs: &mut Vec<i64>| {
+        for (item, chance, group, min, max) in list {
+            if chance < 0.0 {
+                continue;
+            }
+            if min < 0 {
+                refs.push(-min);
+            } else {
+                items.insert(item);
+            }
+            let _ = writeln!(tsv, "{owner}\t{item}\t{chance}\t{group}\t{min}\t{max}");
+        }
+    };
+    for &entry in creatures {
+        let loot_id: i64 = conn
+            .query_row(
+                "SELECT loot_id FROM creature_template WHERE entry = ?1 AND patch <= ?2
+                 ORDER BY patch DESC LIMIT 1",
+                rusqlite::params![entry, PATCH],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if loot_id != 0 {
+            write(format!("c{entry}"), rows("creature_loot_template", loot_id)?, &mut refs);
+        }
+    }
+    while let Some(id) = refs.pop() {
+        if done_refs.insert(id) {
+            write(format!("r{id}"), rows("reference_loot_template", id)?, &mut refs);
+        }
+    }
+    drop(write);
+    std::fs::write(out.join("loot.tsv"), tsv)?;
+    Ok(items)
+}
 
 /// `chests.tsv`: every chest vmangos places on Tirisfall's ground (a `GAMEOBJECT_TYPE_CHEST` named
 /// a chest, lockbox or coffer), outside the towns, with its template's look.
@@ -1008,6 +1071,7 @@ fn main() -> Result<()> {
         )?;
     }
     std::fs::write(out.join("creatures.tsv"), creatures)?;
+    let loot_items = export_loot(&conn, &used, out)?;
 
     // Starting gear: every Forsaken class's rows, and the items they name.
     let mut stmt = conn.prepare(
@@ -1016,6 +1080,7 @@ fn main() -> Result<()> {
     let mut start = String::from("class\titem\tamount\n");
     // The quests' reward items, beside the starting gear and the chests'.
     let mut items_used = rewards_used;
+    items_used.extend(loot_items);
     for row in stmt.query_map([UNDEAD], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
     })? {

@@ -18,6 +18,7 @@ mod chest;
 mod gather;
 mod gear;
 mod hearth;
+mod loot;
 mod meal;
 mod orbs;
 mod pick;
@@ -360,6 +361,11 @@ pub(crate) struct Game {
     /// Armour found this run that the class cannot wear, for the alts: the collection's if the
     /// player gets home alive.
     run_alt: Vec<gear::GearItem>,
+    /// Loot picked up this run, by item: about half is lost on a death.
+    run_loot: std::collections::HashMap<u32, u32>,
+    /// The saved backpack finds, put back after login; and the loot items' guid counter.
+    saved_bag: Vec<(u32, u32)>,
+    next_loot: u64,
     /// The collection, shared by all the player's characters.
     collection: Vec<gear::OwnedItem>,
     /// What the player wears from the collection, by slot, and the next owned item's id.
@@ -562,6 +568,9 @@ impl Game {
             chest_loot: Vec::new(),
             run_gear: gear::RunGear::default(),
             run_alt: Vec::new(),
+            run_loot: std::collections::HashMap::new(),
+            saved_bag: Vec::new(),
+            next_loot: 0,
             collection: Vec::new(),
             loadout: std::collections::HashMap::new(),
             next_owned: 1,
@@ -1086,6 +1095,7 @@ impl Game {
         self.player.target = None;
         let entry = self.mobs[i].entry;
         self.quest_kill(entry, guid);
+        self.drop_loot(entry);
         self.grant_meta_xp(self.meta_kill_xp(level));
         let xp = (kill_xp(level) as f32 * (1.0 + self.gear(gear::GearStat::Experience))) as u32;
         // The soul and the gold drop at the corpse and come back to the player.

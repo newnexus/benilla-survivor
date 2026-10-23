@@ -107,6 +107,19 @@ pub(crate) struct ItemTemplate {
     pub(crate) resistances: [i32; 6],
 }
 
+/// One row of a loot table (`loot.tsv`).
+#[derive(Clone, Debug)]
+pub(crate) struct LootRow {
+    pub(crate) item: u32,
+    /// Percent; 0 in a group shares what its other rows leave.
+    pub(crate) chance: f32,
+    /// 0 for a row rolled on its own; rows of one group give one of them.
+    pub(crate) group: u32,
+    /// The count's range; a negative `min` names reference table `-min`, rolled `max` times.
+    pub(crate) min: i32,
+    pub(crate) max: u32,
+}
+
 /// What a spell is for, in the level-up picks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) enum SpellKind {
@@ -296,6 +309,8 @@ pub(crate) struct WorldData {
     pub(crate) items: HashMap<u32, ItemTemplate>,
     /// `(class, item, amount)`.
     pub(crate) start_items: Vec<(u8, u32, u32)>,
+    /// Loot tables by `(reference, id)`: a creature's by its entry, a reference table by its id.
+    pub(crate) loot: HashMap<(bool, u32), Vec<LootRow>>,
     pub(crate) spells: HashMap<u32, SpellInfo>,
     pub(crate) class_spells: Vec<ClassSpell>,
     pub(crate) talents: Vec<TalentRow>,
@@ -582,6 +597,17 @@ impl WorldData {
             i.stats.sort_by_key(|&(_, v)| std::cmp::Reverse(v));
             i.stats.truncate([0, 0, 1, 2, 3, 3, 3][i.quality.min(6) as usize]);
             d.items.insert(i.entry, i);
+        }
+        for r in rows(&dir, "loot.tsv") {
+            let owner = r.first().map_or("", String::as_str);
+            let Some(id) = owner.get(1..).and_then(|v| v.parse().ok()) else { continue };
+            d.loot.entry((owner.starts_with('r'), id)).or_default().push(LootRow {
+                item: num(r.get(1)),
+                chance: num(r.get(2)),
+                group: num(r.get(3)),
+                min: num(r.get(4)),
+                max: num(r.get(5)),
+            });
         }
         for r in rows(&dir, "start_items.tsv") {
             d.start_items

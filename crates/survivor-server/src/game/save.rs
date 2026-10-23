@@ -9,6 +9,7 @@
 //! money 1234
 //! done 364,380
 //! wear 1
+//! bag 1476 7
 //! ```
 //! ```text
 //! item 1 2652 2 1 1 4:0.168,1:0.06
@@ -103,6 +104,9 @@ impl Game {
         let _ = writeln!(s, "done {}", done.join(","));
         for id in self.loadout.values() {
             let _ = writeln!(s, "wear {id}");
+        }
+        for (entry, count) in self.bag_to_save() {
+            let _ = writeln!(s, "bag {entry} {count}");
         }
         write_file(&path, s);
         let Some(path) = collection_path() else { return };
@@ -218,6 +222,12 @@ impl Game {
                     self.set_quests_done(ids);
                 }
                 Some("wear") => self.restore_worn(num(w.next())),
+                Some("bag") => {
+                    let (entry, count) = (num(w.next()) as u32, num(w.next()) as u32);
+                    if count > 0 && self.data.items.contains_key(&entry) {
+                        self.saved_bag.push((entry, count));
+                    }
+                }
                 // A character file from before the collection was shared: its items join it.
                 Some("item") => {
                     let mut l = item_line(w, true);
