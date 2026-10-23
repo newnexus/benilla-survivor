@@ -81,7 +81,7 @@ pub(crate) struct Boost {
 impl Boost {
     /// The card's lines: "+22% damage", "-12% mana cost", ... A spell that `heals` names its
     /// healing instead, so a damage card never reads as healing the player.
-    pub(crate) fn lines(&self, heals: bool) -> Vec<String> {
+    pub(crate) fn lines(&self, heals: bool, resource: &str) -> Vec<String> {
         let power = if heals { "healing" } else { "damage" };
         if self.rarity == LEGENDARY {
             return vec![
@@ -94,7 +94,7 @@ impl Boost {
             .map(|&(stat, x)| match stat {
                 Stat::Damage => format!("+{:.0}% {power}", x * 100.0),
                 Stat::Cooldown => format!("-{:.0}% cooldown", x * 100.0),
-                Stat::Cost => format!("-{:.0}% mana cost", x * 100.0),
+                Stat::Cost => format!("-{:.0}% {resource} cost", x * 100.0),
                 Stat::Cast => format!("-{:.0}% cast time", x * 100.0),
                 Stat::Targets => {
                     let n = x.round() as u32;
@@ -123,6 +123,15 @@ impl Game {
     }
 
     /// The upgrades `spell`'s skill carries.
+    /// The resource `spell` costs: "mana", "rage" or "energy".
+    pub(super) fn resource_of(&self, spell: u32) -> &'static str {
+        match self.spell(spell).map_or(0, |s| s.power_type) {
+            1 => "rage",
+            3 => "energy",
+            _ => "mana",
+        }
+    }
+
     pub(super) fn mods(&self, spell: u32) -> Mods {
         self.upgrades.get(&self.chain(spell).0).copied().unwrap_or_default()
     }
@@ -240,7 +249,7 @@ impl Game {
         eprintln!(
             "survivor: {} upgrade to {name}: {:?}",
             RARITY_NAMES[usize::from(b.rarity)],
-            b.lines(self.heals_any(b.chain))
+            b.lines(self.heals_any(b.chain), self.resource_of(b.chain))
         );
     }
 }

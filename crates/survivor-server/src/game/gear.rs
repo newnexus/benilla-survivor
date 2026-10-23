@@ -632,6 +632,15 @@ impl Game {
         }
     }
 
+    /// Keep a chest's item without wearing it: into the collection if the run gets home.
+    pub(super) fn keep_item(&mut self, g: GearItem) {
+        let name = self.data.items.get(&g.entry).map_or_else(String::new, |t| t.name.clone());
+        eprintln!("survivor: keeping {name} for the collection");
+        let line = format!("{name}: kept, it goes to your collection when you get home");
+        self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+        self.run_alt.push(g);
+    }
+
     /// Take a chest's item: wear it for the run, or raise the one already worn.
     pub(super) fn take_item(&mut self, g: GearItem) {
         let Some(t) = self.data.items.get(&g.entry).cloned() else { return };
@@ -761,8 +770,8 @@ impl Game {
             }
             let id = self.next_owned;
             self.next_owned += 1;
-            eprintln!("survivor: brought home {name} for the alts");
-            let line = format!("Brought home for your other characters: {name}");
+            eprintln!("survivor: brought home {name} for the collection");
+            let line = format!("Brought home to your collection: {name}");
             self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
             item.owned = Some(id);
             self.collection.push(OwnedItem {

@@ -110,7 +110,20 @@ impl Game {
         }));
     }
 
-    /// The window's answer: buy one, sell them all, or close.
+    /// Every one of `entry` in the backpack sold at its 1.12 price; whether any was.
+    fn sell_all_of(&mut self, entry: u32) -> bool {
+        let count = self.in_pack(entry);
+        let each = self.data.items.get(&entry).map_or(0, |t| t.sell);
+        if count == 0 || each == 0 || entry == super::hearth::HEARTHSTONE {
+            return false;
+        }
+        self.remove_from_pack(entry, count);
+        self.money += each * count;
+        eprintln!("survivor: sold item {entry} x{count} for {}c", each * count);
+        true
+    }
+
+    /// The window's answer: buy one, sell them all, sell the grey ones, or close.
     pub(super) fn take_shop_action(&mut self) {
         let Some((id, action)) = crate::shop::take_action() else { return };
         if self.shop_open != Some(id) {
@@ -143,14 +156,27 @@ impl Game {
                 eprintln!("survivor: bought item {entry} for {price}c");
             }
             Action::Sell(entry) => {
-                let count = self.in_pack(entry);
-                let each = self.data.items.get(&entry).map_or(0, |t| t.sell);
-                if count == 0 || each == 0 || entry == super::hearth::HEARTHSTONE {
+                if !self.sell_all_of(entry) {
                     return;
                 }
-                self.remove_from_pack(entry, count);
-                self.money += each * count;
-                eprintln!("survivor: sold item {entry} x{count} for {}c", each * count);
+            }
+            Action::SellTrash => {
+                let mut trash: Vec<u32> = self
+                    .pack
+                    .iter()
+                    .filter(|p| super::loot::is_backpack(p.field))
+                    .map(|p| p.entry)
+                    .filter(|e| self.data.items.get(e).is_some_and(|t| t.quality == 0))
+                    .collect();
+                trash.sort_unstable();
+                trash.dedup();
+                let mut sold = false;
+                for entry in trash {
+                    sold |= self.sell_all_of(entry);
+                }
+                if !sold {
+                    return;
+                }
             }
         }
         self.send_money();

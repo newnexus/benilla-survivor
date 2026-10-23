@@ -57,6 +57,8 @@ pub(crate) mod f {
     pub const PLAYER_COINAGE: u16 = 1176;
     /// Byte 2: the extra action bars shown (`GetActionBarToggles`).
     pub const PLAYER_FIELD_BYTES: u16 = 1222;
+    /// The unit the combo points sit on; the client shows them only on its current target.
+    pub const PLAYER_FIELD_COMBO_TARGET: u16 = 714;
     pub const PLAYER_NEXT_LEVEL_XP: u16 = 717;
     pub const PLAYER_MOD_DAMAGE_DONE_PCT: u16 = 1215;
     pub const PLAYER_WATCHED_FACTION_INDEX: u16 = 1261;

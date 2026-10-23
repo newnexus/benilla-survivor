@@ -188,6 +188,33 @@ fn session(
                     g.use_item(bag, slot);
                 }
             }
+            // Moving things about the backpack.
+            opcode::CMSG_SWAP_INV_ITEM => {
+                let (Some(&src), Some(&dst)) = (body.first(), body.get(1)) else { continue };
+                if let Some(g) = playing.lock().expect("game").as_mut() {
+                    g.swap_inv_item(src, dst);
+                }
+            }
+            opcode::CMSG_SWAP_ITEM => {
+                let [db, ds, sb, ss] = body.get(..4).and_then(|b| <[u8; 4]>::try_from(b).ok()).unwrap_or_default();
+                if body.len() >= 4 {
+                    if let Some(g) = playing.lock().expect("game").as_mut() {
+                        g.swap_item(db, ds, sb, ss);
+                    }
+                }
+            }
+            opcode::CMSG_SPLIT_ITEM => {
+                let Some(&[sb, ss, db, ds, n]) = body.get(..5).and_then(|b| <&[u8; 5]>::try_from(b).ok()) else { continue };
+                if let Some(g) = playing.lock().expect("game").as_mut() {
+                    g.split_item(sb, ss, db, ds, n);
+                }
+            }
+            opcode::CMSG_DESTROYITEM => {
+                let (Some(&bag), Some(&slot), Some(&n)) = (body.first(), body.get(1), body.get(2)) else { continue };
+                if let Some(g) = playing.lock().expect("game").as_mut() {
+                    g.destroy_item(bag, slot, n);
+                }
+            }
             opcode::CMSG_LEARN_TALENT => {
                 // `u32 talent id, u32 rank` (0-based, the one asked for).
                 let (Some(a), Some(b)) = (body.get(..4), body.get(4..8)) else { continue };

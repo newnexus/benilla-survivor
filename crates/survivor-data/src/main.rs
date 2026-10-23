@@ -198,7 +198,7 @@ fn export_spells(
     let mut spells = String::from(
         "id\tname\trank_text\tkind\tschool\tcast_ms\trange\tpower_type\tcost\tcost_pct\t\
          recovery_ms\tcategory_recovery_ms\tgcd_ms\tduration_ms\tspeed\tdmg_class\tvisual\ticon\t\
-         effects\tbase_points\tdie_sides\tauras\tamplitudes\ttargets\n",
+         effects\tbase_points\tdie_sides\tauras\tamplitudes\ttargets\tfinisher\tper_combo\n",
     );
     let mut stmt = conn.prepare(spell_sql)?;
     let mut count = 0;
@@ -219,6 +219,15 @@ fn export_spells(
         let amps = three("effectAmplitude")?;
         let targets = three("effectImplicitTargetA")?;
         let join = |a: [i64; 3]| format!("{},{},{}", a[0], a[1], a[2]);
+        // A finishing move (`AttributesEx` REQ_TARGET_COMBO_POINTS or REQ_COMBO_POINTS), and what
+        // each effect gains per combo point.
+        let finisher = r.get::<_, i64>("attributesEx")? & 0x0050_0000 != 0;
+        let per_combo: Vec<String> = (1..=3)
+            .map(|k| {
+                r.get::<_, f64>(format!("effectPointsPerComboPoint{k}").as_str())
+                    .map(|v| format!("{v}"))
+            })
+            .collect::<std::result::Result<_, _>>()?;
         let idx = |col: &str| -> Result<u32> { Ok(r.get::<_, i64>(col)? as u32) };
         let cast_ms = cast_times
             .get(&idx("castingTimeIndex")?)
@@ -236,7 +245,7 @@ fn export_spells(
         };
         writeln!(
             spells,
-            "{id}\t{}\t{}\t{}\t{}\t{cast_ms}\t{range:.1}\t{}\t{}\t{}\t{}\t{}\t{}\t{duration}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{id}\t{}\t{}\t{}\t{}\t{cast_ms}\t{range:.1}\t{}\t{}\t{}\t{}\t{}\t{}\t{duration}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             text("name")?,
             text("nameSubtext")?,
             spell_kind(&effects, &auras, &targets),
@@ -257,6 +266,8 @@ fn export_spells(
             join(auras),
             join(amps),
             join(targets),
+            u8::from(finisher),
+            per_combo.join(","),
         )?;
         count += 1;
     }

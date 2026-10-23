@@ -17,6 +17,7 @@ const SLOT: Color = Color::srgba(1.0, 1.0, 1.0, 0.04);
 const SLOT_LIT: Color = Color::srgba(0.85, 0.65, 0.25, 0.22);
 const SHORT: Color = Color::srgb(1.0, 0.25, 0.2);
 const LOCKED: Color = Color::srgb(1.0, 0.35, 0.35);
+const SELL_TRASH_LIT: Color = Color::srgba(0.85, 0.65, 0.25, 0.4);
 /// What a food does, in the game's green for an item's use line.
 const USE: Color = Color::srgb(0.12, 1.0, 0.0);
 /// Pixels a wheel notch scrolls.
@@ -398,13 +399,41 @@ fn spawn_window(
                             slot(g, &one, Action::Buy(ware.entry), can, locked);
                         }
                     });
-                    list.spawn((
-                        text(font, "Sell", 3.6 * vh, crate::GOLD),
-                        Node {
-                            margin: UiRect::top(Val::Vh(1.5 * s)),
-                            ..default()
-                        },
-                    ));
+                    // The heading, and beside it every grey item sold at once.
+                    let trash: u32 = w.sell.iter().filter(|w| w.quality == 0).map(|w| w.price).sum();
+                    list.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::SpaceBetween,
+                        margin: UiRect::top(Val::Vh(1.5 * s)),
+                        flex_shrink: 0.0,
+                        ..default()
+                    })
+                    .with_children(|h| {
+                        h.spawn(text(font, "Sell", 3.6 * vh, crate::GOLD));
+                        let can = trash > 0;
+                        h.spawn((
+                            Press(id, Action::SellTrash),
+                            Shade(can.then_some((SLOT_LIT, SELL_TRASH_LIT))),
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Vh(1.6 * s), Val::Vh(0.7 * s)),
+                                border: UiRect::all(Val::Px(1.5)),
+                                border_radius: BorderRadius::all(Val::Vh(0.8 * s)),
+                                ..default()
+                            },
+                            BackgroundColor(if can { SLOT_LIT } else { SLOT }),
+                            BorderColor::all(crate::quest_panel::PAGE_EDGE),
+                        ))
+                        .with_children(|b| {
+                            let label = if can {
+                                format!("Sell all grey items  ({} gold)", trash)
+                            } else {
+                                "No grey items".to_owned()
+                            };
+                            b.spawn((text(font, &label, 2.6 * vh, if can { WHITE } else { DIM }), Pickable::IGNORE));
+                        });
+                    });
                     if w.sell.is_empty() {
                         list.spawn(text(font, "Nothing in your backpack to sell.", 2.6 * vh, DIM));
                     }

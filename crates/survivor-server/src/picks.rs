@@ -60,6 +60,9 @@ pub struct Offer {
 pub const REROLL: usize = 1000;
 /// The answer that banishes card `k` is this plus `k`.
 pub const BANISH: usize = 2000;
+/// An item card's keep button: `KEEP + n` keeps card n's item for the collection instead of
+/// wearing it.
+pub const KEEP: usize = 3000;
 
 struct Board {
     offer: Option<Offer>,

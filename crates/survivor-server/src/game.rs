@@ -45,6 +45,10 @@ const VISIBLE: f32 = 90.0;
 const VISIBLE_DROP: f32 = 105.0;
 /// How far ahead the auto-target looks, and the half-angle of the cone in front, in radians.
 const TARGET_RANGE: f32 = 30.0;
+/// A rogue's combo points at most, and what a finishing move waits for.
+const MAX_COMBO: u32 = 5;
+/// How long a key-bar press waits for the global cooldown before it is dropped.
+const KEY_WAIT: Duration = Duration::from_millis(1600);
 /// An elite's or a boss's worth in experience, over a creature of its level.
 const ELITE_XP: f32 = 20.0;
 const TARGET_CONE: f32 = 1.05;
@@ -261,6 +265,8 @@ pub(crate) struct Player {
     cooldowns: std::collections::HashMap<u32, Instant>,
     gcd_until: Instant,
     casting: Option<Casting>,
+    /// A rogue's combo points, 0 to 5, kept whatever the target (a survivor's way).
+    combo: u32,
     in_combat_until: Instant,
     pub(crate) pos: [f32; 3],
     pub(crate) facing: f32,
@@ -345,6 +351,8 @@ pub(crate) struct Game {
     /// Souls and coins loose in the world, the last orb's id, and the last tick's time.
     /// When the game menu stopped the world, while it is open.
     menu_paused: Option<Instant>,
+    /// A key-bar spell pressed during the global cooldown, cast as it ends (until the time).
+    key_pending: Option<(u32, Option<u64>, Instant)>,
     /// A held trainer's window open on a run: the world stopped since then.
     talk_paused: Option<Instant>,
     /// The profession trainers' events.
@@ -444,6 +452,8 @@ mod fail {
     pub const DONT_REPORT: u8 = 0x17;
     pub const NOT_READY: u8 = 0x3C;
     pub const NO_POWER: u8 = 0x4D;
+    /// "That ability requires combo points".
+    pub const NEEDS_COMBO: u8 = 0x46;
     pub const OUT_OF_RANGE: u8 = 0x59;
     pub const SPELL_IN_PROGRESS: u8 = 0x61;
     pub const TARGETS_DEAD: u8 = 0x65;
@@ -574,6 +584,7 @@ impl Game {
             waves: None,
             countdown: None,
             menu_paused: None,
+            key_pending: None,
             talk_paused: None,
             events: events::Events::default(),
             orbs: Vec::new(),
@@ -644,6 +655,7 @@ impl Game {
                 cooldowns: std::collections::HashMap::new(),
                 gcd_until: now,
                 casting: None,
+                combo: 0,
                 in_combat_until: now,
                 pos,
                 facing,
@@ -1061,6 +1073,9 @@ impl Game {
                     }
                 }
                 self.player.target = new;
+                if self.player.combo > 0 {
+                    self.send_combo();
+                }
                 match new.and_then(|g| self.mob_index(g)) {
                     Some(i) => i,
                     None => return,
@@ -1410,6 +1425,10 @@ impl Game {
         if s.power_type == self.player.power.kind && self.player.power.current < self.cost_of(s) {
             return Some(fail::NO_POWER);
         }
+        // A finishing move waits for all five combo points.
+        if s.finisher && self.player.combo < MAX_COMBO {
+            return Some(fail::NEEDS_COMBO);
+        }
         // In town nothing is fought: no spell at a creature, none around the caster.
         if !self.in_run() && (Self::needs_target(s) || Self::is_area(s)) {
             return Some(fail::BAD_TARGETS);
@@ -1448,6 +1467,14 @@ impl Game {
         let target = target.or(self.player.target);
         let spell = self.known_rank(spell);
         if let Some(reason) = self.cast_refusal(spell, target, now) {
+            // A key-bar spell pressed while the auto-cast holds the global cooldown: it goes
+            // next, before the auto-cast's own.
+            let cooling = self.player.cooldowns.get(&spell).is_some_and(|&t| now < t);
+            if reason == fail::NOT_READY && !cooling && self.is_key_spell(spell) {
+                self.key_pending = Some((spell, target, now + KEY_WAIT));
+                self.send(opcode::SMSG_CAST_RESULT, &packets::cast_result(spell, Some(fail::DONT_REPORT)));
+                return;
+            }
             eprintln!("survivor: refused cast {spell}: reason {reason:#x}");
             self.send(opcode::SMSG_CAST_RESULT, &packets::cast_result(spell, Some(reason)));
             return;
@@ -1564,8 +1591,11 @@ impl Game {
             gear::GearStat::SpellDamage
         };
         let more = mods.damage * (1.0 + self.gear(kind));
+        // A finisher spends the combo points: each adds its per-point share.
+        let combo = if s.finisher { self.spend_combo() } else { 0 };
         for e in 0..3 {
             let (effect, base, die) = (s.effects[e], s.base_points[e], s.die_sides[e]);
+            let base = base + (s.per_combo[e] * combo as f32).round() as i32;
             let roll = |rng: &mut Rng| {
                 let hi = base + die.max(1);
                 rng.range((base + 1) as f32, hi as f32 + 0.999).floor().max(0.0)
@@ -1611,6 +1641,10 @@ impl Game {
                             amount: (((base + 1).max(1) as f32 + bonus) * more) as u32,
                         });
                     }
+                }
+                // A builder: combo points, on a hit.
+                80 if !hits.is_empty() => {
+                    self.add_combo((base + 1).max(1) as u32);
                 }
                 // A heal on oneself.
                 10 => {
@@ -1723,11 +1757,45 @@ impl Game {
             }
         }
 
+        // A key-bar spell waiting on the global cooldown goes first.
+        if let Some((spell, target, until)) = self.key_pending {
+            if now > until {
+                self.key_pending = None;
+            } else if self.player.casting.is_none() && now >= self.player.gcd_until {
+                self.key_pending = None;
+                self.cast(spell, target);
+                return;
+            } else {
+                return;
+            }
+        }
         if self.player.autocast && self.in_run() && self.player.casting.is_none() && now >= self.player.gcd_until {
             if let Some(id) = self.rotation_pick(now) {
                 self.cast(id, self.player.target);
             }
         }
+    }
+
+    /// A builder's combo points, up to [`MAX_COMBO`].
+    fn add_combo(&mut self, n: u32) {
+        self.player.combo = (self.player.combo + n).min(MAX_COMBO);
+        self.send_combo();
+    }
+
+    /// A finisher takes every combo point: how many it had.
+    fn spend_combo(&mut self) -> u32 {
+        let had = std::mem::take(&mut self.player.combo);
+        self.send_combo();
+        had
+    }
+
+    /// The combo points to the client, on the current target (the client shows them only
+    /// there), kept in `PLAYER_FIELD_BYTES`' second byte beside the right bar's bit.
+    pub(super) fn send_combo(&self) {
+        let mut fl = Fields::default();
+        fl.set(f::PLAYER_FIELD_BYTES, 0x04 << 16 | self.player.combo << 8)
+            .guid(f::PLAYER_FIELD_COMBO_TARGET, self.player.target.unwrap_or(0));
+        self.values(self.player.guid, fl);
     }
 
     /// Rage from a blow dealt or taken, in wire tenths.

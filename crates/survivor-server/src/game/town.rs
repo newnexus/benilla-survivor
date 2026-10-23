@@ -346,6 +346,8 @@ impl Game {
     fn reset_character(&mut self, next: u32) {
         let level = self.player.level;
         self.cancel_cast();
+        self.player.combo = 0;
+        self.send_combo();
         self.player.max_health = base_health(self.player.class) + HEALTH_PER_LEVEL * (level - 1);
         self.player.health = self.player.max_health;
         let (kind, base) = class_power(self.player.class);

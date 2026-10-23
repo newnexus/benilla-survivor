@@ -22,10 +22,19 @@ use crate::packets;
 const MAIN_BAR: usize = 12;
 /// MultiBarRight's first button (1.12's action 25).
 const RIGHT_BAR: usize = 24;
+/// MultiBarBottomLeft's first button (action 61): the bar over the main one, for the
+/// defensives the player fires by key (Q, E, Shift+Q, Shift+E).
+const KEY_BAR: usize = 60;
+const KEY_BAR_SLOTS: usize = 4;
+/// A defensive with a cooldown this long or longer (Sprint, Evasion) is fired by the player, not
+/// the auto-cast.
+const KEY_COOLDOWN_MS: u32 = 20_000;
 /// An action button's kind for an item (1.12's `ACTION_BUTTON_ITEM`).
 const ITEM_BUTTON: u32 = 0x80;
 /// A damage spell's own cooldown, on top of its cast time, when its 1.12 one is shorter.
 const QUEUE_COOLDOWN_MS: u32 = 2000;
+/// A rogue's energy abilities without a cooldown of their own get this one.
+const ROGUE_COOLDOWN_MS: u32 = 4000;
 /// A heal goes off below this share of health, a heal over time below the second.
 const HEAL_BELOW: f32 = 0.5;
 const HOT_BELOW: f32 = 0.7;
@@ -44,6 +53,8 @@ pub(crate) struct Bars {
     next: usize,
     /// Buffs and heals, filling the main bar from its end.
     keep_up: Vec<u32>,
+    /// Defensives with long cooldowns, on the key bar over the main one: the player's to fire.
+    by_key: Vec<u32>,
     /// Button words (`action | kind << 24`) for the right-hand bar.
     extras: Vec<u32>,
 }
@@ -56,14 +67,12 @@ impl Game {
             let (action, kind) = (w & 0x00FF_FFFF, w >> 24);
             match (kind, self.spell(action).map(|s| s.kind)) {
                 (0, Some(SpellKind::Damage)) => bars.queue.push(action),
+                (0, Some(SpellKind::Defensive)) if self.by_key(action) => bars.by_key.push(action),
                 (0, Some(SpellKind::Defensive)) => bars.keep_up.push(action),
+                // Items: the consumables come from the backpack itself (`consumables`).
+                (_, _) if kind == ITEM_BUTTON => {}
                 _ => bars.extras.push(w),
             }
-        }
-        // The Hearthstone with the food and drink: a way home from a run.
-        let hearth = super::hearth::HEARTHSTONE | ITEM_BUTTON << 24;
-        if !bars.extras.contains(&hearth) {
-            bars.extras.push(hearth);
         }
         self.bars = bars;
         self.order_queue();
@@ -81,6 +90,7 @@ impl Game {
             self.player.spells.push(id);
             match kind {
                 SpellKind::Damage => self.bars.queue.push(id),
+                SpellKind::Defensive if self.by_key(id) => self.bars.by_key.push(id),
                 SpellKind::Defensive => self.bars.keep_up.push(id),
                 SpellKind::Other => {}
             }
@@ -93,7 +103,7 @@ impl Game {
     pub(super) fn bar_learn(&mut self, old: Option<u32>, spell: u32) {
         let b = &mut self.bars;
         if let Some(old) = old {
-            for s in b.queue.iter_mut().chain(b.keep_up.iter_mut()) {
+            for s in b.queue.iter_mut().chain(b.keep_up.iter_mut()).chain(b.by_key.iter_mut()) {
                 if *s == old {
                     *s = spell;
                 }
@@ -104,11 +114,61 @@ impl Game {
                     self.bars.queue.push(spell);
                     self.order_queue();
                 }
+                Some(SpellKind::Defensive) if self.by_key(spell) => self.bars.by_key.push(spell),
                 Some(SpellKind::Defensive) => self.bars.keep_up.push(spell),
                 _ => self.bars.extras.push(spell),
             }
         }
         self.arrange_bars(true, None);
+    }
+
+    /// On the key bar: the player's to fire.
+    pub(super) fn is_key_spell(&self, spell: u32) -> bool {
+        self.bars.by_key.contains(&spell)
+    }
+
+    /// A defensive the player fires by key: a long cooldown and no healing.
+    fn by_key(&self, spell: u32) -> bool {
+        let (heal, hot) = self.heals(spell);
+        !heal && !hot && self.spell(spell).is_some_and(|s| s.recovery_ms >= KEY_COOLDOWN_MS)
+    }
+
+    /// The right bar's items: the Hearthstone, then every food and drink in the backpack, one
+    /// button each, as button words.
+    fn consumables(&self) -> Vec<u32> {
+        let mut out = vec![super::hearth::HEARTHSTONE | ITEM_BUTTON << 24];
+        for p in self.pack.iter().filter(|p| super::loot::is_backpack(p.field)) {
+            let w = p.entry | ITEM_BUTTON << 24;
+            if self.food_effect(p.entry).is_some() && !out.contains(&w) {
+                out.push(w);
+            }
+        }
+        out
+    }
+
+    /// The backpack changed: the right bar's items follow it.
+    pub(super) fn refresh_consumables(&mut self) {
+        let mut buttons = self.buttons;
+        self.place_extras(&mut buttons);
+        if buttons != self.buttons {
+            self.buttons = buttons;
+            self.send(opcode::SMSG_ACTION_BUTTONS, &packets::action_buttons(&self.buttons));
+        }
+    }
+
+    /// The right bar: the spells kept there and the consumables, centred (its ends run under
+    /// the minimap and the bags on a phone's bigger UI).
+    fn place_extras(&self, buttons: &mut [u32; 120]) {
+        for b in &mut buttons[RIGHT_BAR..RIGHT_BAR + MAIN_BAR] {
+            *b = 0;
+        }
+        let mut extras: Vec<u32> = self.bars.extras.clone();
+        extras.extend(self.consumables());
+        extras.truncate(MAIN_BAR);
+        let first = RIGHT_BAR + (MAIN_BAR - extras.len()) / 2;
+        for (i, &w) in extras.iter().enumerate() {
+            buttons[first + i] = w;
+        }
     }
 
     /// Lay the roles out on the buttons, post the queue for the UI, and tell the client when
@@ -124,12 +184,10 @@ impl Game {
         for (i, &s) in keep.iter().enumerate() {
             buttons[MAIN_BAR - keep.len() + i] = s;
         }
-        // Centred on the bar: its ends run under the minimap and the bags on a phone's bigger UI.
-        let extras: Vec<u32> = b.extras.iter().copied().take(MAIN_BAR).collect();
-        let first = RIGHT_BAR + (MAIN_BAR - extras.len()) / 2;
-        for (i, &w) in extras.iter().enumerate() {
-            buttons[first + i] = w;
+        for (i, &s) in b.by_key.iter().take(KEY_BAR_SLOTS).enumerate() {
+            buttons[KEY_BAR + i] = s;
         }
+        self.place_extras(&mut buttons);
         self.buttons = buttons;
         let in_town = !self.in_run();
         crate::bar::post(self.strip_spells(), fired, b.next, self.queue_editable(), in_town);
@@ -223,6 +281,8 @@ impl Game {
         } else {
             0
         };
+        // An energy ability with no cooldown of its own takes the rogue's.
+        let own = if s.power_type == 3 && s.recovery_ms == 0 { own.max(ROGUE_COOLDOWN_MS) } else { own };
         Duration::from_millis(u64::from(s.recovery_ms.max(own)))
     }
 

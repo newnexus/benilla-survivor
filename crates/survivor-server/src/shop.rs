@@ -43,6 +43,8 @@ pub enum Action {
     Buy(u32),
     /// Every one of the item the backpack holds.
     Sell(u32),
+    /// Every grey (poor quality) item the backpack holds.
+    SellTrash,
     Close,
 }
 

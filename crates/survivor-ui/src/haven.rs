@@ -47,8 +47,35 @@ place("MainMenuBar", 0, -%DOWN%)
 place("MultiBarRight", %RIGHT%, 0)
 "#;
 
+/// The bar over the main one shown, and its first four buttons on Q, E, Shift+Q, Shift+E: the
+/// defensives the player fires (the server puts them there).
+const KEY_BAR: &str = r#"
+SHOW_MULTI_ACTIONBAR_1 = 1
+if MultiActionBar_Update then MultiActionBar_Update() end
+SetBinding("Q", "MULTIACTIONBAR1BUTTON1")
+SetBinding("E", "MULTIACTIONBAR1BUTTON2")
+SetBinding("SHIFT-Q", "MULTIACTIONBAR1BUTTON3")
+SetBinding("SHIFT-E", "MULTIACTIONBAR1BUTTON4")
+"#;
+
 pub(crate) fn plugin(app: &mut App) {
-    app.add_systems(Update, slide_in_town);
+    app.add_systems(Update, (slide_in_town, key_bar));
+}
+
+/// Once in the world: the key bar on.
+fn key_bar(
+    objects: benilla_app::Objects,
+    mut frames: ResMut<benilla_app::SurvivorFrames>,
+    mut done: Local<bool>,
+) {
+    if objects.player().is_none() {
+        *done = false;
+        return;
+    }
+    if !*done {
+        *done = true;
+        frames.run.push(KEY_BAR.to_owned());
+    }
 }
 
 #[derive(Default)]

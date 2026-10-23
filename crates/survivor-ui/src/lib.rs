@@ -566,6 +566,12 @@ fn spawn_screen(
                                 b.spawn(text(font, format!("Banish   [ Shift {} ]", i + 1), 2.8 * vh, GOLD));
                             });
                         }
+                        // An item: kept for the collection instead of worn.
+                        if card.item.is_some() {
+                            col.spawn(small_button(offer.id, picks::KEEP + i)).with_children(|b| {
+                                b.spawn(text(font, "Keep, don't wear", 2.8 * vh, GOLD));
+                            });
+                        }
                     });
                 }
             });

@@ -153,6 +153,10 @@ pub(crate) struct SpellInfo {
     pub(crate) auras: [u32; 3],
     pub(crate) amplitudes: [u32; 3],
     pub(crate) targets: [u32; 3],
+    /// A rogue's finishing move: it spends the combo points.
+    pub(crate) finisher: bool,
+    /// What each effect gains per combo point spent.
+    pub(crate) per_combo: [f32; 3],
 }
 
 /// `FactionTemplate.dbc` 14, "Monster": hostile to every player.
@@ -707,6 +711,8 @@ impl WorldData {
                 auras: three(r.get(21)),
                 amplitudes: three(r.get(22)),
                 targets: three(r.get(23)),
+                finisher: num::<u8>(r.get(24)) != 0,
+                per_combo: three(r.get(25)),
             };
             d.spells.insert(s.id, s);
         }

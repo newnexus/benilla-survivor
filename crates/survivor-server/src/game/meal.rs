@@ -288,6 +288,7 @@ impl Game {
         fl.guid(field, 0);
         self.values(self.player.guid, fl);
         self.send(opcode::SMSG_DESTROY_OBJECT, &packets::destroy(guid));
+        self.refresh_consumables();
     }
 
     /// Once a second, each meal gives its share; one past its end comes off the aura row.

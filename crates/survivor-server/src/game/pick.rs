@@ -295,7 +295,7 @@ impl Game {
             replaces: None,
             defensive: self.kind(spell) == SpellKind::Defensive,
             rarity: b.rarity,
-            boost: b.lines(self.heals_any(spell)),
+            boost: b.lines(self.heals_any(spell), self.resource_of(spell)),
             item: None,
         }
     }
@@ -318,6 +318,21 @@ impl Game {
             }
             picks::clear();
             self.resume(Instant::now());
+            return;
+        }
+        // An item kept, not worn: it goes to the collection when the run gets home.
+        if let Some(k) = index.checked_sub(picks::KEEP) {
+            let item = self
+                .pick
+                .as_mut()
+                .filter(|p| p.chest)
+                .and_then(|p| p.items.get_mut(k))
+                .and_then(Option::take);
+            if let Some(g) = item {
+                self.keep_item(g);
+                picks::clear();
+                self.resume(Instant::now());
+            }
             return;
         }
         if index == picks::REROLL && !offer.cards.is_empty() && offer.title.is_none() {

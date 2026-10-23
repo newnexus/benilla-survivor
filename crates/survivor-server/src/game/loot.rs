@@ -138,23 +138,9 @@ impl Game {
             };
             let n = left.min(most);
             left -= n;
-            self.next_loot += 1;
-            // Beside the starting items' and the worn chest gear's guids, clear of both.
-            let guid = 0x4000_0000_0000_0000
-                | (self.player.guid << 16)
-                | (0x2000 + self.next_loot % 0x2000);
-            let u = packets::item_create(guid, self.player.guid, &t, n);
-            self.send(opcode::SMSG_UPDATE_OBJECT, &packets::update_object(&[u]));
-            let mut fl = Fields::default();
-            fl.guid(field, guid);
-            self.values(self.player.guid, fl);
-            self.pack.push(super::PackItem {
-                guid,
-                entry,
-                count: n,
-                field,
-            });
+            self.new_stack(entry, n, field);
         }
+        self.refresh_consumables();
         count - left
     }
 
@@ -181,6 +167,7 @@ impl Game {
             fl.guid(field, 0);
             self.values(self.player.guid, fl);
             self.send(opcode::SMSG_DESTROY_OBJECT, &packets::destroy(guid));
+            self.refresh_consumables();
         }
     }
 
@@ -234,6 +221,148 @@ impl Game {
         for (entry, count) in std::mem::take(&mut self.saved_bag) {
             self.add_to_pack(entry, count);
         }
+    }
+}
+
+/// `INVENTORY_SLOT_BAG_0`: the player's own slots (equipment and backpack) as a bag byte.
+const OWN_BAG: u8 = 255;
+/// `EQUIP_ERR_ITEM_DOESNT_GO_TO_SLOT`, and `EQUIP_ERR_COULDNT_SPLIT_ITEMS`.
+const ERR_WRONG_SLOT: u8 = 3;
+const ERR_CANT_SPLIT: u8 = 26;
+
+impl Game {
+    /// The pack item in the player's slot `slot`.
+    fn pack_index(&self, slot: u8) -> Option<usize> {
+        let field = f::PLAYER_INV_SLOT_HEAD + u16::from(slot) * 2;
+        self.pack.iter().position(|p| p.field == field)
+    }
+
+    /// `SMSG_INVENTORY_CHANGE_FAILURE`: the move is refused and the client's items unlock.
+    fn refuse_move(&self, reason: u8, a: Option<usize>, b: Option<usize>) {
+        let guid = |i: Option<usize>| i.map_or(0, |i| self.pack[i].guid);
+        let mut body = crate::wire::Body::new();
+        body.u8(reason).u64(guid(a)).u64(guid(b)).u8(0);
+        self.send(opcode::SMSG_INVENTORY_CHANGE_FAILURE, &body.0);
+    }
+
+    /// `CMSG_SWAP_ITEM`: only within the player's own slots here (there are no other bags).
+    pub(crate) fn swap_item(&mut self, dst_bag: u8, dst_slot: u8, src_bag: u8, src_slot: u8) {
+        if dst_bag != OWN_BAG || src_bag != OWN_BAG {
+            let src = if src_bag == OWN_BAG { self.pack_index(src_slot) } else { None };
+            self.refuse_move(ERR_WRONG_SLOT, src, None);
+            return;
+        }
+        self.swap_inv_item(src_slot, dst_slot);
+    }
+
+    /// `CMSG_SWAP_INV_ITEM`: a backpack item moved to another backpack slot: into an empty one,
+    /// onto a stack of its own kind (as much as fits), or swapped with what is there. Worn gear
+    /// is the collection's business, not the bag's: anything else is refused.
+    pub(crate) fn swap_inv_item(&mut self, src: u8, dst: u8) {
+        let (a, b) = (self.pack_index(src), self.pack_index(dst));
+        let in_pack = |s: u8| BACKPACK.contains(&u16::from(s));
+        let Some(a) = a.filter(|_| in_pack(src) && in_pack(dst) && src != dst) else {
+            self.refuse_move(ERR_WRONG_SLOT, a, b);
+            return;
+        };
+        let field = |s: u8| f::PLAYER_INV_SLOT_HEAD + u16::from(s) * 2;
+        let entry = self.pack[a].entry;
+        let most = self.data.items.get(&entry).map_or(1, |t| t.stackable.max(1));
+        let mut fl = Fields::default();
+        match b {
+            // Onto a stack of the same: as much as fits.
+            Some(b) if self.pack[b].entry == entry && most > 1 && self.pack[b].count < most => {
+                let n = self.pack[a].count.min(most - self.pack[b].count);
+                self.pack[b].count += n;
+                self.pack[a].count -= n;
+                let (bg, bc) = (self.pack[b].guid, self.pack[b].count);
+                let mut sf = Fields::default();
+                sf.set(f::ITEM_STACK_COUNT, bc);
+                self.values(bg, sf);
+                let (ag, ac) = (self.pack[a].guid, self.pack[a].count);
+                if ac > 0 {
+                    let mut sf = Fields::default();
+                    sf.set(f::ITEM_STACK_COUNT, ac);
+                    self.values(ag, sf);
+                    return;
+                }
+                self.pack.remove(a);
+                fl.guid(field(src), 0);
+                self.values(self.player.guid, fl);
+                self.send(opcode::SMSG_DESTROY_OBJECT, &packets::destroy(ag));
+                return;
+            }
+            Some(b) => {
+                self.pack[b].field = field(src);
+                fl.guid(field(src), self.pack[b].guid);
+            }
+            None => {
+                fl.guid(field(src), 0);
+            }
+        }
+        self.pack[a].field = field(dst);
+        fl.guid(field(dst), self.pack[a].guid);
+        self.values(self.player.guid, fl);
+    }
+
+    /// `CMSG_SPLIT_ITEM`: `count` of a backpack stack into an empty backpack slot.
+    pub(crate) fn split_item(&mut self, src_bag: u8, src: u8, dst_bag: u8, dst: u8, count: u8) {
+        let a = if src_bag == OWN_BAG { self.pack_index(src) } else { None };
+        let ok = src_bag == OWN_BAG
+            && dst_bag == OWN_BAG
+            && BACKPACK.contains(&u16::from(dst))
+            && self.pack_index(dst).is_none()
+            && a.is_some_and(|a| u32::from(count) > 0 && self.pack[a].count > u32::from(count));
+        let Some(a) = a.filter(|_| ok) else {
+            self.refuse_move(ERR_CANT_SPLIT, a, None);
+            return;
+        };
+        let (entry, n) = (self.pack[a].entry, u32::from(count));
+        self.pack[a].count -= n;
+        let (ag, ac) = (self.pack[a].guid, self.pack[a].count);
+        let mut sf = Fields::default();
+        sf.set(f::ITEM_STACK_COUNT, ac);
+        self.values(ag, sf);
+        let field = f::PLAYER_INV_SLOT_HEAD + u16::from(dst) * 2;
+        self.new_stack(entry, n, field);
+    }
+
+    /// `CMSG_DESTROYITEM`: `count` of the item in a backpack slot thrown away (0: all of it).
+    pub(crate) fn destroy_item(&mut self, bag: u8, slot: u8, count: u8) {
+        let Some(i) = self.pack_index(slot).filter(|_| bag == OWN_BAG && BACKPACK.contains(&u16::from(slot)))
+        else {
+            return;
+        };
+        let p = &mut self.pack[i];
+        let n = if count == 0 { p.count } else { u32::from(count).min(p.count) };
+        p.count -= n;
+        let (guid, left, field) = (p.guid, p.count, p.field);
+        if left > 0 {
+            let mut sf = Fields::default();
+            sf.set(f::ITEM_STACK_COUNT, left);
+            self.values(guid, sf);
+            return;
+        }
+        self.pack.remove(i);
+        let mut fl = Fields::default();
+        fl.guid(field, 0);
+        self.values(self.player.guid, fl);
+        self.send(opcode::SMSG_DESTROY_OBJECT, &packets::destroy(guid));
+        self.save();
+    }
+
+    /// A new stack of `n` of `entry` in the player field `field` (an empty backpack slot).
+    fn new_stack(&mut self, entry: u32, n: u32, field: u16) {
+        let Some(t) = self.data.items.get(&entry).cloned() else { return };
+        self.next_loot += 1;
+        // Beside the starting items' and the worn chest gear's guids, clear of both.
+        let guid = 0x4000_0000_0000_0000 | (self.player.guid << 16) | (0x2000 + self.next_loot % 0x2000);
+        let u = packets::item_create(guid, self.player.guid, &t, n);
+        self.send(opcode::SMSG_UPDATE_OBJECT, &packets::update_object(&[u]));
+        let mut fl = Fields::default();
+        fl.guid(field, guid);
+        self.values(self.player.guid, fl);
+        self.pack.push(super::PackItem { guid, entry, count: n, field });
     }
 }
 
