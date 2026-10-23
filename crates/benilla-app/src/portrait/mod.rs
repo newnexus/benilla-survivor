@@ -72,7 +72,7 @@ pub(crate) mod test_bake;
 /// window's NPC ([`crate::ui_session::InteractNpc`]); `"targettarget"` resolves only while drawn,
 /// and so do a party member's pet, `"partypetN"`, and the loot source `SetLootPortrait` binds
 /// ([`benilla_ui::script::LOOT_PORTRAIT_UNIT`]).
-const SLOTS: [&str; 14] = [
+const SLOTS: [&str; 15] = [
     "player",
     "target",
     "targettarget",
@@ -87,6 +87,8 @@ const SLOTS: [&str; 14] = [
     "partypet3",
     "partypet4",
     benilla_ui::script::LOOT_PORTRAIT_UNIT,
+    // survivor: a game mode's watched-over unit, [`crate::SURVIVOR_FOCUS`].
+    "focus",
 ];
 /// The character panes' booth pass ([`panes::sync_panes`]), for the systems that share its
 /// booths and light pool.
@@ -280,17 +282,23 @@ impl PortraitBakes {
     }
 }
 
-/// survivor: hand the `"npc"` slot's live bake to [`crate::SurvivorPortrait`].
+/// survivor: hand the `"npc"` slot's live bake to [`crate::SurvivorPortrait`], and the `"focus"`
+/// slot's to [`crate::SurvivorFocusPortrait`].
 pub(crate) fn feed_survivor_portrait(
     images: Res<PortraitImages>,
     mut out: ResMut<crate::SurvivorPortrait>,
+    mut focus: ResMut<crate::SurvivorFocusPortrait>,
 ) {
-    let live = match images.0.get("npc") {
+    let live = |token| match images.0.get(token) {
         Some(PortraitSource::Live(h)) => Some(h.clone()),
         _ => None,
     };
-    if out.0 != live {
-        out.0 = live;
+    let (npc, watched) = (live("npc"), live("focus"));
+    if out.0 != npc {
+        out.0 = npc;
+    }
+    if focus.0 != watched {
+        focus.0 = watched;
     }
 }
 
@@ -641,6 +649,7 @@ impl Plugin for PortraitPlugin {
         app.init_resource::<PortraitImages>()
             // survivor: the "npc" bake handed out to a game mode's window.
             .init_resource::<crate::SurvivorPortrait>()
+            .init_resource::<crate::SurvivorFocusPortrait>()
             .add_systems(PostUpdate, feed_survivor_portrait)
             .init_resource::<PortraitBakes>()
             .init_resource::<PaneRate>()
@@ -1160,6 +1169,11 @@ fn sync_portraits(
                 entity
             }
             "npc" => interact_npc.0,
+            // survivor: the unit a game mode watches over, while it is in view.
+            "focus" => {
+                let guid = crate::SURVIVOR_FOCUS.load(std::sync::atomic::Ordering::Relaxed);
+                (guid != 0).then(|| party.index.0.get(&guid).copied()).flatten()
+            }
             // Gated on the UI drawing it, as `"targettarget"`: no stock file binds it.
             benilla_ui::script::LOOT_PORTRAIT_UNIT => party
                 .panes

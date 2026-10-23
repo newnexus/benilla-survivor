@@ -160,6 +160,9 @@ struct Mob {
     nudge_at: Instant,
     /// A run's boss, whatever its template's rank.
     boss: bool,
+    /// Sent after a profession trainer (that event) rather than the player, while they are
+    /// defended or escorted.
+    prey: Option<usize>,
 }
 
 
@@ -208,6 +211,7 @@ impl Mob {
             aimed_at: [f32::MAX; 3],
             nudge_at: now,
             boss: false,
+            prey: None,
         }
     }
 
@@ -803,22 +807,12 @@ impl Game {
                     name: t.name.clone(),
                     health: m.health,
                     max: m.max_health,
-                    friendly: false,
                 })
             })
             .collect::<Vec<_>>();
-        // The trainer defended or escorted, first.
-        let mut bars = bars;
-        if let Some((guid, name)) = self.event_focus() {
-            bars.insert(0, crate::big_bars::Bar {
-                guid,
-                name,
-                health: 1,
-                max: 1,
-                friendly: true,
-            });
-        }
         crate::big_bars::set(bars);
+        // The trainer defended or escorted, for the focus frame.
+        crate::focus::set(self.event_focus());
     }
 
     fn revive(&mut self, now: Instant) {
@@ -1239,7 +1233,10 @@ impl Game {
     }
 
     fn mob_ai(&mut self, i: usize, now: Instant) {
-        let me = self.player.pos;
+        // A trainer's attacker goes for the trainer while they are watched over, else the player.
+        let prey = self.mobs[i].prey.filter(|&e| self.prey_at(e, now).is_some());
+        self.mobs[i].prey = prey;
+        let me = prey.and_then(|e| self.prey_at(e, now)).unwrap_or(self.player.pos);
         // In town the player is out of reach: nothing comes for them, and a chase breaks off.
         let player_alive = self.player.dead_until.is_none() && self.mode == town::Mode::Run;
         let shown = self.visible.contains(&i);
@@ -1346,9 +1343,10 @@ impl Game {
             let guid = m.guid;
             let id = self.spline_id();
             self.send(opcode::SMSG_MONSTER_MOVE, &packets::monster_stop(guid, here, id));
+            let victim = prey.map_or(self.player.guid, |e| self.trainer_guid(e));
             self.send(
                 opcode::SMSG_ATTACKSTART,
-                &packets::attack_start(guid, self.player.guid),
+                &packets::attack_start(guid, victim),
             );
         }
         let m = &mut self.mobs[i];
@@ -1359,6 +1357,10 @@ impl Game {
         let (guid, lo, hi) = (m.guid, m.damage.0, m.damage.1);
         // Every blow lands: the survivor has no miss chance.
         let (swing, damage) = (Swing::Hit, self.rng.range(lo, hi).round().max(1.0) as u32);
+        if let Some(e) = prey {
+            self.hurt_trainer(e, guid, damage, now);
+            return;
+        }
         self.send(
             opcode::SMSG_ATTACKERSTATEUPDATE,
             &packets::attacker_state(guid, self.player.guid, swing, damage),

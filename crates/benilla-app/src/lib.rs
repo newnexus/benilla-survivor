@@ -239,6 +239,14 @@ pub static SURVIVOR_TALKER: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 #[derive(bevy::prelude::Resource, Default)]
 pub struct SurvivorPortrait(pub Option<bevy::prelude::Handle<bevy::prelude::Image>>);
 
+/// survivor: the unit a game mode watches over (its guid, 0 for none), baked in a portrait slot
+/// of its own, `"focus"` (1.12 has no focus unit): [`SurvivorFocusPortrait`].
+pub static SURVIVOR_FOCUS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// survivor: the `"focus"` slot's baked portrait, for a game mode's own focus frame.
+#[derive(bevy::prelude::Resource, Default)]
+pub struct SurvivorFocusPortrait(pub Option<bevy::prelude::Handle<bevy::prelude::Image>>);
+
 /// survivor: the voice request newer than `seen`, if any: its number and bytes.
 pub(crate) fn take_survivor_voice(seen: u64) -> Option<(u64, Option<Vec<u8>>)> {
     let mut v = SURVIVOR_VOICE.lock().ok()?;

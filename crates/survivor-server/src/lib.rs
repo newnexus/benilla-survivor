@@ -166,8 +166,6 @@ pub mod big_bars {
         pub name: String,
         pub health: u32,
         pub max: u32,
-        /// Someone to protect (a trainer defended or escorted), drawn in green.
-        pub friendly: bool,
     }
 
     static BARS: Mutex<Vec<Bar>> = Mutex::new(Vec::new());
@@ -179,6 +177,33 @@ pub mod big_bars {
     pub(crate) fn set(bars: Vec<Bar>) {
         if let Ok(mut b) = BARS.lock() {
             *b = bars;
+        }
+    }
+}
+
+/// The unit the player watches over (a trainer defended or escorted), for a focus frame: 1.12
+/// has none, the later game's shows it under the target frame.
+pub mod focus {
+    use std::sync::Mutex;
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Focus {
+        pub guid: u64,
+        pub name: String,
+        pub level: u32,
+        pub health: u32,
+        pub max: u32,
+    }
+
+    static FOCUS: Mutex<Option<Focus>> = Mutex::new(None);
+
+    pub fn current() -> Option<Focus> {
+        FOCUS.lock().ok().and_then(|f| f.clone())
+    }
+
+    pub(crate) fn set(focus: Option<Focus>) {
+        if let Ok(mut f) = FOCUS.lock() {
+            *f = focus;
         }
     }
 }

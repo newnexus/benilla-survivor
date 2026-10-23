@@ -128,7 +128,7 @@ impl Game {
             let round = w.bosses / BOSSES.len();
             let (entry, scale) = BOSSES[w.bosses % BOSSES.len()];
             w.bosses += 1;
-            self.spawn(&mut w, entry, level + 2 + round as u32 * 3, Some((scale, round)), now);
+            let _ = self.spawn(&mut w, entry, level + 2 + round as u32 * 3, Some((scale, round)), now);
         }
         let (next, _) = BOSSES[w.bosses % BOSSES.len()];
         crate::run_clock::set(Some(crate::run_clock::Clock {
@@ -169,18 +169,19 @@ impl Game {
                 None if w.kind > 0 && self.rng.unit() < 0.3 => KINDS[w.kind - 1],
                 None => KINDS[w.kind],
             };
-            self.spawn(&mut w, entry, level, None, now);
+            let _ = self.spawn(&mut w, entry, level, None, now);
         }
         self.waves = Some(w);
     }
 
     /// One creature of `entry` at `level` out of sight round the player, chasing; a boss when
     /// `boss` says how much bigger and which round.
-    pub(super) fn spawn(&mut self, w: &mut Waves, entry: u32, level: u32, boss: Option<(f32, usize)>, now: Instant) {
+    /// Its place in `mobs`, when one could stand.
+    pub(super) fn spawn(&mut self, w: &mut Waves, entry: u32, level: u32, boss: Option<(f32, usize)>, now: Instant) -> Option<usize> {
         // Our own handle on the shared world data, so `self` stays free to change.
         let data = std::sync::Arc::clone(&self.data);
-        let Some(t) = data.creatures.get(&entry) else { return };
-        let Some(pos) = self.spawn_spot() else { return };
+        let Some(t) = data.creatures.get(&entry) else { return None };
+        let Some(pos) = self.spawn_spot() else { return None };
         let me = self.player.pos;
         let facing = (me[1] - pos[1]).atan2(me[0] - pos[0]);
         w.next_guid = (w.next_guid + 1) & 0x3F_FFFF;
@@ -212,9 +213,19 @@ impl Game {
                 && matches!(o.state, MobState::Dead { despawn, .. } if now >= despawn)
                 && !self.visible.contains(&i)
         });
+        // While a trainer walks home, some go for them instead.
+        if boss.is_none() {
+            m.prey = self.escort_prey();
+        }
         match free {
-            Some(i) => self.mobs[i] = m,
-            None => self.mobs.push(m),
+            Some(i) => {
+                self.mobs[i] = m;
+                Some(i)
+            }
+            None => {
+                self.mobs.push(m);
+                Some(self.mobs.len() - 1)
+            }
         }
     }
 

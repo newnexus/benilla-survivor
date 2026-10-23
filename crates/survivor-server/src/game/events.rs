@@ -8,14 +8,18 @@
 //! follows the player; as they reach Deathknell's barrier the trainer thanks them, the quest is
 //! done, and they run on alone to where they will stand. Home, they stand there for good.
 //!
-//! While a defence or an escort is on, the trainer talks (`/say`), and their bar shows at the
-//! top of the screen in green, in place of the focus frame 1.12 does not have.
+//! While a defence or an escort is on, the trainer talks (`/say`), and shows in a focus frame
+//! under the target frame (1.12 has none; the later game's look).
+//!
+//! The attackers go for the trainer as well: half of each defence wave, and some of a run's
+//! spawns while an escort is on. Overwhelmed, the defence breaks off (it comes again after
+//! [`RETRY_AFTER`]), or the escorted trainer flees back to their spot.
 
 use std::time::{Duration, Instant};
 
 use benilla_protocol::messages::opcode;
 
-use super::{dist2d, Game, Path};
+use super::{dist2d, f, Fields, Game, Path, Swing};
 use crate::events::{quest_id, DEFEND_SECS, EVENTS};
 use crate::packets::{self, Update};
 
@@ -39,6 +43,14 @@ const HOME_REACH: f32 = 22.0;
 const NEXT_CHANCE: f32 = 0.8;
 /// Out of the world: a trainer not at their spot this run.
 const PARK: [f32; 3] = [0.0, 0.0, -500.0];
+/// A watched-over trainer's health: this many times the player's.
+const TRAINER_HEALTH: f32 = 3.0;
+/// Every this many of a defence wave go for the trainer; while an escort is on, this share of
+/// a run's spawns.
+const DEFENCE_PREY_EVERY: u32 = 2;
+const ESCORT_PREY: f32 = 0.35;
+/// An overwhelmed defence comes again this long after, the player still at the spot.
+const RETRY_AFTER: Duration = Duration::from_secs(10);
 
 /// The events' state for this session.
 #[derive(Default)]
@@ -54,6 +66,11 @@ pub(crate) struct Events {
     next_say: Option<Instant>,
     /// The trainer running on alone into Deathknell, left where they get to.
     homeward: Option<usize>,
+    /// The watched-over trainer's health and its top.
+    health: u32,
+    max_health: u32,
+    /// An overwhelmed defence does not come again before this.
+    retry_at: Option<Instant>,
 }
 
 /// A defence: its trainer, when it is won, the next wave, the next line, and the line said.
@@ -157,6 +174,7 @@ impl Game {
         self.events.defence = None;
         self.events.homeward = None;
         self.events.next_say = None;
+        self.events.retry_at = None;
         self.events.active.iter_mut().for_each(|a| *a = false);
         self.place_trainers(now);
     }
@@ -165,7 +183,7 @@ impl Game {
         self.data.creatures.get(&EVENTS[e].trainer).map_or_else(String::new, |t| t.name.clone())
     }
 
-    fn trainer_guid(&self, e: usize) -> u64 {
+    pub(super) fn trainer_guid(&self, e: usize) -> u64 {
         self.npcs[self.events.npc[e]].guid
     }
 
@@ -237,6 +255,7 @@ impl Game {
                 && self.quest_in_log(attack)
                 && !self.quest_finished_in_log(attack)
                 && dist2d(me, spot) <= AMBUSH_RANGE
+                && self.events.retry_at.is_none_or(|t| now >= t)
             {
                 self.start_defence(e, now);
             }
@@ -250,6 +269,7 @@ impl Game {
             {
                 self.events.following = Some(e);
                 self.events.next_say = Some(now + SAY_EVERY / 2);
+                self.heal_trainer(e);
                 let line = format!("{} follows you. Lead them to Deathknell.", self.trainer_name(e));
                 self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
             }
@@ -290,7 +310,11 @@ impl Game {
     /// The trainer runs from where they are to their place in Deathknell.
     fn run_home(&mut self, e: usize, now: Instant) {
         let h = EVENTS[e].home;
-        self.lead_npc(self.events.npc[e], [h[0], h[1], h[2]], packets::STOCK_SPEEDS[1], now);
+        self.run_home_to(e, [h[0], h[1], h[2]], now);
+    }
+
+    fn run_home_to(&mut self, e: usize, to: [f32; 3], now: Instant) {
+        self.lead_npc(self.events.npc[e], to, packets::STOCK_SPEEDS[1], now);
     }
 
     /// The attack comes: a wave now and every [`WAVE_EVERY`], [`DEFEND_SECS`] to hold out.
@@ -307,6 +331,7 @@ impl Game {
             said: 0,
             warned: 0,
         });
+        self.heal_trainer(e);
         self.defence_wave(e, now);
     }
 
@@ -314,8 +339,11 @@ impl Game {
         let level = self.player.level.max(2);
         if let Some(mut w) = self.waves.take() {
             for &(entry, count) in EVENTS[e].ambush {
-                for _ in 0..count {
-                    self.spawn(&mut w, entry, level, None, now);
+                for k in 0..count {
+                    let i = self.spawn(&mut w, entry, level, None, now);
+                    if let Some(i) = i.filter(|_| k % DEFENCE_PREY_EVERY == 0) {
+                        self.mobs[i].prey = Some(e);
+                    }
                 }
             }
             self.waves = Some(w);
@@ -400,12 +428,95 @@ impl Game {
         if let Some(t) = self.events.next_say.as_mut() {
             *t += by;
         }
+        if let Some(t) = self.events.retry_at.as_mut() {
+            *t += by;
+        }
     }
 
-    /// The trainer to watch over, for the green bar at the top: the one defended or escorted.
-    pub(super) fn event_focus(&self) -> Option<(u64, String)> {
-        let e = self.events.defence.as_ref().map(|d| d.event).or(self.events.following)?;
-        Some((self.trainer_guid(e), self.trainer_name(e)))
+    /// The trainer to watch over, for the focus frame: the one defended or escorted.
+    pub(super) fn event_focus(&self) -> Option<crate::focus::Focus> {
+        let e = self.focus_event()?;
+        let level = self.data.creatures.get(&EVENTS[e].trainer).map_or(1, |t| t.level.0);
+        Some(crate::focus::Focus {
+            guid: self.trainer_guid(e),
+            name: self.trainer_name(e),
+            level,
+            health: self.events.health,
+            max: self.events.max_health.max(1),
+        })
+    }
+
+    fn focus_event(&self) -> Option<usize> {
+        self.events.defence.as_ref().map(|d| d.event).or(self.events.following)
+    }
+
+    /// Where trainer `e` stands while defended or escorted, for their attackers to go to.
+    pub(super) fn prey_at(&self, e: usize, now: Instant) -> Option<[f32; 3]> {
+        (self.focus_event() == Some(e)).then(|| self.trainer_here(e, now))
+    }
+
+    /// A new spawn during an escort: now and then it goes for the trainer.
+    pub(super) fn escort_prey(&mut self) -> Option<usize> {
+        let e = self.events.following?;
+        (self.rng.unit() < ESCORT_PREY).then_some(e)
+    }
+
+    /// The trainer watched over from now on, at full health.
+    fn heal_trainer(&mut self, e: usize) {
+        // `$SURVIVOR_TRAINER_HEALTH=0.3`: in place of the factor, for trying an overwhelm.
+        let factor = std::env::var("SURVIVOR_TRAINER_HEALTH")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(TRAINER_HEALTH);
+        let max = (self.player.max_health as f32 * factor).round() as u32;
+        self.events.max_health = max.max(1);
+        self.events.health = self.events.max_health;
+        self.show_trainer_health(e);
+    }
+
+    /// The trainer's own unit health in the client, in the share of theirs left.
+    fn show_trainer_health(&self, e: usize) {
+        let Some(t) = self.data.creatures.get(&EVENTS[e].trainer) else { return };
+        let top = t.health.0.max(1);
+        let share = self.events.health as f32 / self.events.max_health.max(1) as f32;
+        let mut fl = Fields::default();
+        fl.set(f::HEALTH, ((top as f32 * share).ceil() as u32).max(1));
+        self.values(self.trainer_guid(e), fl);
+    }
+
+    /// A blow from `attacker` lands on trainer `e`; at no health left they are overwhelmed.
+    pub(super) fn hurt_trainer(&mut self, e: usize, attacker: u64, damage: u32, now: Instant) {
+        self.send(
+            opcode::SMSG_ATTACKERSTATEUPDATE,
+            &packets::attacker_state(attacker, self.trainer_guid(e), Swing::Hit, damage),
+        );
+        self.events.health = self.events.health.saturating_sub(damage);
+        if self.events.health > 0 {
+            self.show_trainer_health(e);
+            return;
+        }
+        let name = self.trainer_name(e);
+        eprintln!("survivor: {name} is overwhelmed");
+        self.events.health = self.events.max_health;
+        self.show_trainer_health(e);
+        if self.events.defence.as_ref().is_some_and(|d| d.event == e) {
+            self.events.defence = None;
+            self.events.retry_at = Some(now + RETRY_AFTER);
+            self.trainer_say(e, "I can't hold them... fall back!");
+            let line = format!(
+                "{name} was overwhelmed. The attack comes again in {} seconds.",
+                RETRY_AFTER.as_secs()
+            );
+            self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+        } else if self.events.following == Some(e) {
+            self.events.following = None;
+            self.events.next_say = None;
+            self.trainer_say(e, "Too many of them! I'm going back!");
+            let line = format!("{name} was overwhelmed and fled back. Find them there again.");
+            self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));
+            let s = EVENTS[e].spot;
+            self.run_home_to(e, [s[0], s[1], s[2]], now);
+        }
     }
 
     /// The escorted trainer runs after the player, a few yards behind.
