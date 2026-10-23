@@ -159,6 +159,9 @@ impl Game {
             || self.paused()
             || !self.walked
             || self.armory_open.is_some()
+            // A trainer's or the spirit healer's window open: the giver waits for it to close.
+            || self.trainer_open.is_some()
+            || self.spirit_open.is_some()
         {
             return;
         }
@@ -213,6 +216,17 @@ impl Game {
 
     /// Put `quests` of giver `guid` on the survivor's quest window.
     fn open_quest_panel(&mut self, guid: u64, quests: &[(u32, PanelKind)]) {
+        // The reward items' survivor stats are rolled as they are first shown, so the preview is
+        // what comes.
+        for &(id, _) in quests {
+            let rewards = self.quest(id).map(|q| q.rewards.clone()).unwrap_or_default();
+            for e in rewards {
+                if self.slot_of_item(e).is_some() && !self.reward_rolls.contains_key(&e) {
+                    let g = self.roll_item(e);
+                    self.reward_rolls.insert(e, g);
+                }
+            }
+        }
         let entries = quests
             .iter()
             .filter_map(|&(id, kind)| {
@@ -240,6 +254,10 @@ impl Game {
                                 entry: e,
                                 name: t.name.clone(),
                                 display: t.display,
+                                preview: self
+                                    .reward_rolls
+                                    .get(&e)
+                                    .map(|g| self.armory_row(g, u64::from(e), false, false, false)),
                             })
                         })
                         .collect(),
@@ -430,6 +448,21 @@ impl Game {
             }
             self.write_slot(slot);
         }
+    }
+
+    /// The creatures the player's quests still want killed: the spawner mixes them into a run.
+    pub(super) fn quest_targets(&self) -> Vec<u32> {
+        let mut v = Vec::new();
+        for a in self.quests.slots.iter().flatten() {
+            let Some(q) = self.quest(a.id) else { continue };
+            for (k, &(entry, need)) in q.kills.iter().enumerate() {
+                let creature = entry != 0 && entry & crate::data::OBJECTIVE_GAMEOBJECT == 0;
+                if creature && a.counts[k] < need && self.data.creatures.contains_key(&entry) {
+                    v.push(entry);
+                }
+            }
+        }
+        v
     }
 
     /// The quests handed in, for the save file.

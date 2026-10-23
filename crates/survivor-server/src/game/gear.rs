@@ -401,6 +401,12 @@ fn wearable(class: u8, item_class: u32, subclass: u32, inventory_type: u32) -> b
 impl Game {
     /// Three items for every chest, for this run.
     pub(super) fn roll_chest_loot(&mut self) {
+        self.chest_loot = (0..self.chests.len()).map(|_| self.roll_gear_set()).collect();
+        self.publish_chest_glow();
+    }
+
+    /// Three items to choose from, as a chest holds: mostly the class's own armour kind.
+    fn roll_gear_set(&mut self) -> Vec<GearItem> {
         let class = self.player.class;
         let gear = |own: bool| -> Vec<u32> {
             self.data
@@ -422,25 +428,19 @@ impl Game {
                 .collect()
         };
         let (pool, others) = (gear(true), gear(false));
-        self.chest_loot = (0..self.chests.len())
-            .map(|_| {
-                let mut items: Vec<GearItem> = Vec::new();
-                while items.len() < LOOT && !pool.is_empty() {
-                    let mut entry = pool[(self.rng.next() % pool.len() as u64) as usize];
-                    let armour = self.data.items.get(&entry).is_some_and(|t| t.class == 4);
-                    if armour && !others.is_empty() && self.rng.next() % 100 >= OWN_ARMOUR_PERCENT
-                    {
-                        entry = others[(self.rng.next() % others.len() as u64) as usize];
-                    }
-                    if items.iter().any(|i| i.entry == entry) {
-                        continue;
-                    }
-                    items.push(self.roll_item(entry));
-                }
-                items
-            })
-            .collect();
-        self.publish_chest_glow();
+        let mut items: Vec<GearItem> = Vec::new();
+        while items.len() < LOOT && !pool.is_empty() {
+            let mut entry = pool[(self.rng.next() % pool.len() as u64) as usize];
+            let armour = self.data.items.get(&entry).is_some_and(|t| t.class == 4);
+            if armour && !others.is_empty() && self.rng.next() % 100 >= OWN_ARMOUR_PERCENT {
+                entry = others[(self.rng.next() % others.len() as u64) as usize];
+            }
+            if items.iter().any(|i| i.entry == entry) {
+                continue;
+            }
+            items.push(self.roll_item(entry));
+        }
+        items
     }
 
     /// The rarity of `entry`: its 1.12 quality, poor and common both common.
@@ -450,7 +450,7 @@ impl Game {
     }
 
     /// An item of `entry` with its stats rolled.
-    fn roll_item(&mut self, entry: u32) -> GearItem {
+    pub(super) fn roll_item(&mut self, entry: u32) -> GearItem {
         let rarity = self.rarity_of(entry);
         let template = self.data.items.get(&entry);
         let slot = template
@@ -778,7 +778,11 @@ impl Game {
     /// empty.
     pub(super) fn quest_reward_item(&mut self, entry: u32) {
         let Some(slot) = self.slot_of_item(entry) else { return };
-        let mut item = self.roll_item(entry);
+        // As its preview showed it, when it had one.
+        let mut item = match self.reward_rolls.remove(&entry) {
+            Some(g) => g,
+            None => self.roll_item(entry),
+        };
         let id = self.next_owned;
         self.next_owned += 1;
         item.owned = Some(id);
@@ -984,7 +988,7 @@ impl Game {
         self.armory_open = Some(crate::armory::post(tabs));
     }
 
-    fn armory_row(
+    pub(super) fn armory_row(
         &self,
         g: &GearItem,
         key: u64,
@@ -1086,6 +1090,25 @@ impl Game {
                 );
             }
         }
+    }
+
+    /// An elite or a boss slain: a choice of items on the card screen, the world paused, no
+    /// chest to open and nothing to pay. One must be taken.
+    pub(super) fn open_elite_offer(&mut self, name: &str, now: Instant) {
+        let loot = self.roll_gear_set();
+        for g in &loot {
+            let r = self.seen.entry(g.entry).or_insert(g.rarity);
+            *r = (*r).max(g.rarity);
+        }
+        let cards: Vec<Card> = loot.iter().map(|g| self.item_card(g)).collect();
+        if cards.is_empty() {
+            return;
+        }
+        eprintln!("survivor: {name}'s spoils offered");
+        let title = Some(format!("{name}'s spoils"));
+        let id = crate::picks::post_titled(self.player.level, cards, title, None);
+        self.pick = Some(super::pick::Pick::chest(id, now, loot, 0));
+        self.freeze(now);
     }
 
     /// A chest opened: its items on the card screen, the world paused.

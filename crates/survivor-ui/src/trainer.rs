@@ -304,9 +304,10 @@ fn spawn_window(
                                 },
                             ));
                             let (label, can) = match row.next {
-                                Some((level, cost)) => {
-                                    (format!("+  Lv {level}  {}", money(cost)), w.money >= cost)
-                                }
+                                Some((level, cost)) => (
+                                    format!("+  Lv {level}  {}", money(cost)),
+                                    w.money >= cost && level <= w.level,
+                                ),
                                 None => ("All ranks".to_owned(), false),
                             };
                             r.spawn(step_button(id, Action::Buy(row.chain), can, 27.0))

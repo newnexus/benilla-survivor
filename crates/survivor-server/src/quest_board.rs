@@ -46,6 +46,8 @@ pub struct RewardItem {
     pub entry: u32,
     pub name: String,
     pub display: u32,
+    /// The item as it will come, its survivor stats already rolled, for its preview.
+    pub preview: Option<crate::armory::Row>,
 }
 
 /// The screen's answer.

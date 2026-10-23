@@ -29,6 +29,8 @@ pub struct Window {
     pub trainer: String,
     /// The town purse, copper.
     pub money: u32,
+    /// The camp level: no rank above it can be bought.
+    pub level: u32,
     pub rows: Vec<Row>,
 }
 
@@ -65,7 +67,7 @@ pub fn act(id: u64, a: Action) {
     board().action = Some((id, a));
 }
 
-pub(crate) fn post(trainer: String, money: u32, rows: Vec<Row>) -> u64 {
+pub(crate) fn post(trainer: String, money: u32, level: u32, rows: Vec<Row>) -> u64 {
     let mut b = board();
     let id = b.next_id;
     b.next_id += 1;
@@ -73,6 +75,7 @@ pub(crate) fn post(trainer: String, money: u32, rows: Vec<Row>) -> u64 {
         id,
         trainer,
         money,
+        level,
         rows,
     });
     b.action = None;

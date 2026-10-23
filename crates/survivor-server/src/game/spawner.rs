@@ -21,6 +21,9 @@ const SPAWN_NEAR: f32 = 25.0;
 const SPAWN_FAR: f32 = 45.0;
 /// The wave kind moves on after this many seconds, at random between the two.
 const KIND_EVERY: (f32, f32) = (60.0, 180.0);
+/// The share of a run's spawns, outside the marked areas, that are creatures the player's
+/// quests want killed, while any are wanted.
+const QUEST_SHARE: f32 = 0.25;
 /// A boss every this many seconds.
 const BOSS_EVERY: Duration = Duration::from_secs(240);
 /// Spawned creatures alive at once: a start, more each minute, and a ceiling.
@@ -144,6 +147,7 @@ impl Game {
             } else {
                 &[]
             };
+            let targets = self.quest_targets();
             let entry = match area {
                 Some(a) => {
                     let kinds = AREAS[a].kinds;
@@ -153,6 +157,12 @@ impl Game {
                 None if !heralds.is_empty() && self.rng.unit() < HERALD_SHARE => {
                     let e = heralds[(self.rng.next() % heralds.len() as u64) as usize];
                     eprintln!("survivor: a herald of the boss, {e}");
+                    e
+                }
+                // Now and then a creature the player's quests want.
+                None if !targets.is_empty() && self.rng.unit() < QUEST_SHARE => {
+                    let e = targets[(self.rng.next() % targets.len() as u64) as usize];
+                    eprintln!("survivor: a creature a quest wants, {e}");
                     e
                 }
                 // Now and then one of the kind before, so the waves blend.
@@ -182,10 +192,16 @@ impl Game {
         m.hostile = true;
         if let Some((scale, round)) = boss {
             let more = 1.0 + round as f32;
-            m.max_health = (m.max_health as f32 * BOSS_HEALTH * more) as u32;
+            // `$SURVIVOR_BOSS_HEALTH=0.05`: in place of the boss's health factor, for trying a kill.
+            let factor = std::env::var("SURVIVOR_BOSS_HEALTH")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(BOSS_HEALTH);
+            m.max_health = ((m.max_health as f32 * factor * more) as u32).max(1);
             m.health = m.max_health;
             m.damage = (m.damage.0 * BOSS_DAMAGE * more, m.damage.1 * BOSS_DAMAGE * more);
             m.scale *= scale;
+            m.boss = true;
             eprintln!("survivor: boss {} (level {level}, {} health)", t.name, m.max_health);
             let line = format!("{} has come for you!", t.name);
             self.send(opcode::SMSG_NOTIFICATION, &packets::notification(&line));

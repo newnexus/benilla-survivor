@@ -134,6 +134,9 @@ struct Screen {
     shown: Option<(u64, f32, Entity)>,
     /// The offer already answered: it stays hidden while the server takes the answer.
     answered: Option<u64>,
+    /// The offer last put on screen, and when (real seconds): cards take no answer for
+    /// [`CARD_GRACE`] after they appear, so a click meant for the world is not taken as a pick.
+    appeared: (u64, f32),
     library: Option<Mutex<Library>>,
     /// The library failed to load; said once, then the screen stays off.
     broken: bool,
@@ -455,8 +458,14 @@ fn show_offer(
     mut fonts: ResMut<Assets<Font>>,
     mut images: ResMut<Assets<Image>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    time: Res<Time<Real>>,
 ) {
     let offer = picks::offer().filter(|o| screen.answered != Some(o.id));
+    if let Some(o) = &offer {
+        if screen.appeared.0 != o.id {
+            screen.appeared = (o.id, time.elapsed_secs());
+        }
+    }
     // Text sizes are pixels, so a resized window lays the screen out again.
     let height = window.single().map_or(720.0, Window::height);
     let wanted = offer.as_ref().map(|o| (o.id, height));
@@ -755,13 +764,17 @@ fn spawn_card(
     });
 }
 
-/// A click on a card, or its number key, answers the offer.
+/// How long new cards stand on screen before they take an answer (s).
+const CARD_GRACE: f32 = 0.7;
+
+/// A click on a card, or its number key, answers the offer, once the cards have stood a moment.
 fn take_card(
     mut screen: ResMut<Screen>,
     keys: Res<ButtonInput<KeyCode>>,
     cards: Query<(&CardButton, &Interaction)>,
+    time: Res<Time<Real>>,
 ) {
-    if screen.shown.is_none() {
+    if screen.shown.is_none() || time.elapsed_secs() - screen.appeared.1 < CARD_GRACE {
         return;
     }
     const KEYS: [[KeyCode; 2]; 3] = [

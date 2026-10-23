@@ -3,24 +3,23 @@
 //! title, and its story in white, appearing as they speak it (paced by their spoken line, the
 //! VoiceOver addon's). Continue (or Space) skips ahead; when they finish, or on Continue, a
 //! second page brings the objectives, the rewards, and Accept (or Complete) and Decline. An X
-//! closes it at any time. The story scrolls with the mouse wheel or a finger; a thumb on the
-//! window moves no one.
+//! closes it at any time. The story, the objectives and rewards, and a long list of quests
+//! scroll with the mouse wheel or a finger, their top and bottom edges fading into the page
+//! while there is more that way; a thumb on the window moves no one.
 //!
 //! The server posts the window through [`survivor_server::quest_board`] and takes the answer the
 //! same way.
 
-use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::RelativeCursorPosition;
 use survivor_server::quest_board::{self, Answer, Panel, PanelKind};
 
 /// The pages: a dark tint over the world, a faint gold edge, white text, gold headings.
-const PAGE: Color = Color::srgba(0.035, 0.03, 0.025, 0.86);
-const PAGE_EDGE: Color = Color::srgba(0.8, 0.62, 0.28, 0.5);
-const WHITE: Color = Color::srgb(0.95, 0.93, 0.88);
+pub(crate) const PAGE: Color = Color::srgba(0.035, 0.03, 0.025, 0.86);
+pub(crate) const PAGE_EDGE: Color = Color::srgba(0.8, 0.62, 0.28, 0.5);
+pub(crate) const WHITE: Color = Color::srgb(0.95, 0.93, 0.88);
 const DIM: Color = Color::srgb(0.68, 0.65, 0.58);
 const TAB: Color = Color::srgba(1.0, 1.0, 1.0, 0.04);
 const TAB_ON: Color = Color::srgba(0.85, 0.65, 0.25, 0.22);
@@ -37,6 +36,11 @@ const LETTERS_PER_SECOND: f32 = 16.0;
 /// The portrait's frame: its gold, and its size in screen heights.
 const FRAME_GOLD: Color = Color::srgb(0.85, 0.65, 0.2);
 const PORTRAIT: f32 = 13.0;
+/// A scrolling area's fade at an edge with more beyond it: its depth in screen heights.
+const FADE: f32 = 7.0;
+/// The fade: a faint gold glint at the very edge, then the page's dark, then nothing.
+const FADE_GLINT: Color = Color::srgba(0.85, 0.65, 0.25, 0.28);
+const FADE_DARK: Color = Color::srgba(0.035, 0.03, 0.025, 0.95);
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Talk>()
@@ -49,6 +53,8 @@ pub(crate) fn plugin(app: &mut App) {
             press_buttons,
             light_buttons,
             scroll_text,
+            show_fades,
+            show_preview,
             block_touch,
         )
             .chain(),
@@ -62,9 +68,20 @@ struct PanelRoot;
 #[derive(Component)]
 struct TalkerPortrait;
 
-/// The story's scrolling area.
+/// The story's scrolling area: kept on its newest line as it is told.
 #[derive(Component)]
 struct StoryScroll;
+
+/// A scrolling area of the window: the wheel over it or a thumb on it moves it.
+#[derive(Component)]
+struct ScrollArea;
+
+/// The fade over a scrolling area's top (or bottom) edge, shown while there is more that way.
+#[derive(Component)]
+struct Fade {
+    area: Entity,
+    top: bool,
+}
 
 /// The story's text, appearing as the giver speaks it.
 #[derive(Component)]
@@ -123,6 +140,11 @@ struct Shown {
     /// The quest whose talk began last: the window and its tab.
     spoken: Option<(u64, usize)>,
 }
+
+/// The chosen reward's preview beside the window: its icon and tooltip, filled by
+/// [`show_preview`].
+#[derive(Component)]
+struct RewardPreview;
 
 /// A quest's tab on the window's left.
 #[derive(Component)]
@@ -259,6 +281,70 @@ fn page(extra: Node) -> impl Bundle {
     )
 }
 
+/// A scrolling column taking what its page leaves (`extra` added to it, its rows `gap` apart),
+/// filled by `fill`, with a fade over each edge.
+fn scroll_area(
+    parent: &mut ChildSpawnerCommands,
+    extra: impl Bundle,
+    gap: Val,
+    fill: impl FnOnce(&mut ChildSpawnerCommands),
+) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
+            min_height: Val::Px(0.0),
+            ..default()
+        })
+        .with_children(|w| {
+            let area = w
+                .spawn((
+                    extra,
+                    ScrollArea,
+                    RelativeCursorPosition::default(),
+                    ScrollPosition::default(),
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        flex_grow: 1.0,
+                        flex_shrink: 1.0,
+                        min_height: Val::Px(0.0),
+                        row_gap: gap,
+                        overflow: Overflow::scroll_y(),
+                        ..default()
+                    },
+                ))
+                .with_children(fill)
+                .id();
+            for top in [true, false] {
+                let stops = vec![
+                    ColorStop::percent(FADE_GLINT, 0.0),
+                    ColorStop::percent(FADE_DARK, 12.0),
+                    ColorStop::percent(Color::NONE, 100.0),
+                ];
+                w.spawn((
+                    Fade { area, top },
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        right: Val::Px(0.0),
+                        top: if top { Val::Px(0.0) } else { Val::Auto },
+                        bottom: if top { Val::Auto } else { Val::Px(0.0) },
+                        height: Val::Vh(FADE),
+                        ..default()
+                    },
+                    BackgroundGradient::from(if top {
+                        LinearGradient::to_bottom(stops)
+                    } else {
+                        LinearGradient::to_top(stops)
+                    }),
+                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                ));
+            }
+        });
+}
+
 /// A button's colours, at rest and under the cursor.
 #[derive(Component, Clone, Copy)]
 struct Shade(Color, Color);
@@ -356,14 +442,16 @@ fn spawn_panel(
             if panel.entries.len() > 1 {
                 root.spawn(page(Node {
                     width: Val::Vh(30.0),
+                    max_height: Val::Vh(74.0),
                     align_self: AlignSelf::FlexStart,
                     margin: UiRect::top(Val::Vh(10.0)),
                     padding: UiRect::all(Val::Vh(2.0)),
                     row_gap: Val::Vh(1.0),
                     ..default()
                 }))
-                .with_children(|tabs| {
-                    tabs.spawn(text("Quests", title_font, 4.0, crate::GOLD));
+                .with_children(|page| {
+                    page.spawn(text("Quests", title_font, 4.0, crate::GOLD));
+                    scroll_area(page, (), Val::Vh(1.0), |tabs| {
                     for (k, q) in panel.entries.iter().enumerate() {
                         let mark = match q.kind {
                             PanelKind::Offer => "!",
@@ -392,6 +480,7 @@ fn spawn_panel(
                             ));
                         });
                     }
+                    });
                 });
             }
             // The talk: who speaks, the quest, the story as it is told.
@@ -484,19 +573,7 @@ fn spawn_panel(
                 ));
                 // Step one: the story as it is told. Step two takes its place on the same page.
                 if step == Step::Talk {
-                    s.spawn((
-                        StoryScroll,
-                        RelativeCursorPosition::default(),
-                        ScrollPosition::default(),
-                        Node {
-                            flex_grow: 1.0,
-                            flex_basis: Val::Px(0.0),
-                            overflow: Overflow::scroll_y(),
-                            flex_direction: FlexDirection::Column,
-                            ..default()
-                        },
-                    ))
-                    .with_children(|t| {
+                    scroll_area(s, StoryScroll, Val::Px(0.0), |t| {
                         t.spawn((Story(e.text.clone()), text("", font, 3.4, WHITE)));
                     });
                     // While the giver talks: go on without waiting.
@@ -514,13 +591,7 @@ fn spawn_panel(
                 }
                 // Then: what to do, what it pays, and the answer.
                 if step == Step::Decide {
-                    s.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        flex_grow: 1.0,
-                        row_gap: Val::Vh(1.2),
-                        ..default()
-                    })
-                    .with_children(|col| {
+                    scroll_area(s, (), Val::Vh(1.2), |col| {
                         if e.kind == PanelKind::Offer && !e.objectives.is_empty() {
                             col.spawn(text("Quest Objectives", title_font, 4.4, crate::GOLD));
                             col.spawn(text(&e.objectives, font, 3.2, WHITE));
@@ -607,11 +678,9 @@ fn spawn_panel(
                                 }
                             });
                         }
-                        col.spawn(Node {
-                            flex_grow: 1.0,
-                            ..default()
-                        });
-                        col.spawn(Node {
+                    });
+                    // The answer stays at the page's foot, the list above it scrolling.
+                    s.spawn(Node {
                             flex_direction: FlexDirection::Row,
                             justify_content: JustifyContent::SpaceBetween,
                             column_gap: Val::Vh(2.0),
@@ -640,11 +709,100 @@ fn spawn_panel(
                                 b.spawn(text(accept_label, font, 4.4, crate::GOLD));
                             });
                         });
-                    });
                 }
             });
+            // The reward chosen, shown beside the window: on a phone there is no pointer to
+            // hover an icon with.
+            if step == Step::Decide && !e.rewards.is_empty() {
+                root.spawn((
+                    RewardPreview,
+                    Sheet,
+                    Node {
+                        width: Val::Vh(52.0),
+                        align_self: AlignSelf::FlexStart,
+                        margin: UiRect::top(Val::Vh(10.0)),
+                        flex_direction: FlexDirection::Column,
+                        ..default()
+                    },
+                ));
+            }
         })
         .id()
+}
+
+/// The chosen reward's preview: its icon over its tooltip, drawn again when another is chosen.
+fn show_preview(
+    mut commands: Commands,
+    pick: Res<RewardPick>,
+    screen: Res<crate::Screen>,
+    mut images: ResMut<Assets<Image>>,
+    window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    previews: Query<Entity, With<RewardPreview>>,
+    mut drawn: Local<Option<(Entity, u32)>>,
+) {
+    let Ok(holder) = previews.single() else {
+        *drawn = None;
+        return;
+    };
+    if *drawn == Some((holder, pick.1)) {
+        return;
+    }
+    let Some(panel) = quest_board::current() else { return };
+    let Some(row) = panel
+        .entries
+        .iter()
+        .flat_map(|e| e.rewards.iter())
+        .find(|r| r.entry == pick.1)
+        .and_then(|r| r.preview.clone())
+    else {
+        return;
+    };
+    let Some(font) = screen.font() else { return };
+    let icon = screen.library.as_ref().and_then(|l| {
+        let l = l.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        l.item_icon(row.display)
+    });
+    let icon = icon.map(|i| images.add(i));
+    *drawn = Some((holder, pick.1));
+    let vh = window.single().map_or(7.2, |w| w.height() / 100.0);
+    commands.entity(holder).despawn_related::<Children>();
+    commands.entity(holder).with_children(|p| {
+        p.spawn((
+            Node {
+                row_gap: Val::Vh(1.0),
+                column_gap: Val::Vh(1.2),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::FlexStart,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .with_children(|r| {
+            let mut i = r.spawn((
+                Node {
+                    width: Val::Vh(9.0),
+                    height: Val::Vh(9.0),
+                    flex_shrink: 0.0,
+                    border: UiRect::all(Val::Vh(0.25)),
+                    border_radius: BorderRadius::all(Val::Vh(0.6)),
+                    ..default()
+                },
+                BorderColor::all(crate::armory::TOOLTIP_EDGE),
+                Pickable::IGNORE,
+            ));
+            if let Some(h) = icon {
+                i.insert(ImageNode::new(h));
+            }
+            r.spawn((
+                crate::armory::tooltip_node(),
+                BackgroundColor(crate::armory::TOOLTIP_BACK),
+                BorderColor::all(crate::armory::TOOLTIP_EDGE),
+                Pickable::IGNORE,
+            ))
+            // Larger than the collection's: the window around it is drawn shrunk.
+            .with_children(|tip| crate::armory::tooltip_lines(tip, &row, &font, vh * 1.5));
+        });
+    });
 }
 
 /// The story appears as it is told, the newest line kept in view; whole once the talk is done.
@@ -768,7 +926,7 @@ fn scroll_text(
             &ComputedNode,
             &UiGlobalTransform,
         ),
-        With<StoryScroll>,
+        With<ScrollArea>,
     >,
 ) {
     let notches: f32 = wheel
@@ -797,6 +955,24 @@ fn scroll_text(
     }
 }
 
+/// Each fade shows while its area has more beyond that edge.
+fn show_fades(
+    areas: Query<(&ScrollPosition, &ComputedNode), With<ScrollArea>>,
+    mut fades: Query<(&Fade, &mut Visibility)>,
+) {
+    for (fade, mut vis) in &mut fades {
+        let Ok((pos, node)) = areas.get(fade.area) else { continue };
+        let k = node.inverse_scale_factor();
+        let top = ((node.content_size.y - node.size.y) * k).max(0.0);
+        let more = if fade.top { pos.0.y > 1.0 } else { pos.0.y < top - 1.0 };
+        vis.set_if_neq(if more {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+    }
+}
+
 /// Tell the touch controls where the window is, so a thumb on it moves no one.
 pub(crate) fn block_touch(
     sheets: Query<(&ComputedNode, &UiGlobalTransform), With<Sheet>>,
@@ -811,60 +987,4 @@ pub(crate) fn block_touch(
             .blockers
             .push(Rect::from_center_half_size(centre, half));
     }
-}
-
-/// A sheet of parchment: warm paper with mottling, darker and burnt toward its edges.
-pub(crate) fn parchment() -> Image {
-    const W: usize = 256;
-    const H: usize = 256;
-    let hash = |x: i32, y: i32| {
-        let n = (x.wrapping_mul(374_761_393) ^ y.wrapping_mul(668_265_263)) as u32;
-        let n = (n ^ (n >> 13)).wrapping_mul(1_274_126_177);
-        (n ^ (n >> 16)) as f32 / u32::MAX as f32
-    };
-    let noise = |x: f32, y: f32| {
-        let (ix, iy) = (x.floor() as i32, y.floor() as i32);
-        let (fx, fy) = (x - ix as f32, y - iy as f32);
-        let (sx, sy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
-        let a = hash(ix, iy) + (hash(ix + 1, iy) - hash(ix, iy)) * sx;
-        let b = hash(ix, iy + 1) + (hash(ix + 1, iy + 1) - hash(ix, iy + 1)) * sx;
-        a + (b - a) * sy
-    };
-    let mut px = vec![0u8; W * H * 4];
-    for y in 0..H {
-        for x in 0..W {
-            let (u, v) = (x as f32 / W as f32, y as f32 / H as f32);
-            let mut n = 0.0;
-            let mut amp = 0.5;
-            let mut f = 4.0;
-            for _ in 0..4 {
-                n += amp * noise(u * f, v * f);
-                f *= 2.0;
-                amp *= 0.5;
-            }
-            // Distance to the nearest edge, roughened, for the burnt rim.
-            let edge = u.min(1.0 - u).min(v).min(1.0 - v) + (n - 0.5) * 0.03;
-            let rim = (edge / 0.06).clamp(0.0, 1.0);
-            let shade = (0.82 + 0.22 * n) * (0.45 + 0.55 * rim.powf(0.6));
-            let (r, g, b) = (0.93 * shade, 0.80 * shade, 0.56 * shade);
-            let i = (y * W + x) * 4;
-            px[i..i + 4].copy_from_slice(&[
-                (r.min(1.0) * 255.0) as u8,
-                (g.min(1.0) * 255.0) as u8,
-                (b.min(1.0) * 255.0) as u8,
-                255,
-            ]);
-        }
-    }
-    Image::new(
-        Extent3d {
-            width: W as u32,
-            height: H as u32,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        px,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    )
 }

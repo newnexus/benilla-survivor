@@ -360,6 +360,13 @@ impl Game {
 
     /// At the end of a tick: a level gained and no pick open stops the world for one.
     pub(super) fn open_pending_pick(&mut self, now: Instant) {
+        // An elite's spoils first: a kill's level-up waits behind them.
+        if self.pick.is_none() && self.player.dead_until.is_none() && self.in_run() {
+            if let Some(name) = self.elite_drops.pop() {
+                self.open_elite_offer(&name, now);
+                return;
+            }
+        }
         if self.picks_pending == 0 || self.pick.is_some() || self.player.dead_until.is_some() {
             self.pick_due = None;
             return;

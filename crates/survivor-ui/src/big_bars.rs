@@ -1,15 +1,15 @@
-//! Elites' and bosses' health along the bottom of the screen, as Dark Souls shows a boss: the name
-//! over a long thin red bar, the part just lost pale for a moment before it drains. They stay up
-//! while the creature is in view; several stack upward, the first lowest.
+//! Elites' and bosses' health along the top of the screen: the name over a long thin red bar, the
+//! part just lost pale for a moment before it drains. They stay up while the creature is in view;
+//! several stack downward, the first highest.
 
 use bevy::prelude::*;
 
-/// A bar's length and thickness, the gap between stacked bars, and how high off the screen's
-/// bottom the lowest one sits, in screen heights (vh). The bottom clears the action bar.
+/// A bar's length and thickness, the gap between stacked bars, and how far down from the screen's
+/// top the first one sits, in screen heights (vh), below the run clock.
 const LENGTH: f32 = 70.0;
 const THICK: f32 = 1.1;
 const GAP: f32 = 1.4;
-const BOTTOM: f32 = 13.0;
+const TOP: f32 = 9.0;
 const NAME: f32 = 2.6;
 /// The part just lost holds this long, then drains this much of the bar a second.
 const HOLD: f32 = 0.6;
@@ -79,9 +79,9 @@ fn show_bars(
                 Node {
                     position_type: PositionType::Absolute,
                     width: Val::Percent(100.0),
-                    bottom: Val::Vh(BOTTOM),
-                    // Stacked upward: the first bar at the bottom.
-                    flex_direction: FlexDirection::ColumnReverse,
+                    top: Val::Vh(TOP),
+                    // Stacked downward: the first bar at the top.
+                    flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
                     row_gap: Val::Vh(GAP),
                     ..default()

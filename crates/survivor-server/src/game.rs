@@ -43,6 +43,8 @@ const VISIBLE: f32 = 90.0;
 const VISIBLE_DROP: f32 = 105.0;
 /// How far ahead the auto-target looks, and the half-angle of the cone in front, in radians.
 const TARGET_RANGE: f32 = 30.0;
+/// An elite's or a boss's worth in experience, over a creature of its level.
+const ELITE_XP: f32 = 20.0;
 const TARGET_CONE: f32 = 1.05;
 /// Melee reach between two unit centres, in yards.
 const MELEE_REACH: f32 = 4.0;
@@ -150,6 +152,8 @@ struct Mob {
     aimed_at: [f32; 3],
     /// When a chaser on its way may next step aside from another.
     nudge_at: Instant,
+    /// A run's boss, whatever its template's rank.
+    boss: bool,
 }
 
 
@@ -197,6 +201,7 @@ impl Mob {
             spawned: false,
             aimed_at: [f32::MAX; 3],
             nudge_at: now,
+            boss: false,
         }
     }
 
@@ -356,6 +361,10 @@ pub(crate) struct Game {
     chest_price: u32,
     chest_asked: Option<usize>,
     chest_loot: Vec<Vec<gear::GearItem>>,
+    /// Elites and bosses slain whose spoils are still to be offered, by name.
+    elite_drops: Vec<String>,
+    /// Quest reward items as their previews show them, by entry, until one is taken.
+    reward_rolls: std::collections::HashMap<u32, gear::GearItem>,
     /// Chest gear worn this run, by equipment slot, and what the player has brought home.
     run_gear: gear::RunGear,
     /// Armour found this run that the class cannot wear, for the alts: the collection's if the
@@ -566,6 +575,8 @@ impl Game {
             chest_price: 0,
             chest_asked: None,
             chest_loot: Vec::new(),
+            elite_drops: Vec::new(),
+            reward_rolls: std::collections::HashMap::new(),
             run_gear: gear::RunGear::default(),
             run_alt: Vec::new(),
             run_loot: std::collections::HashMap::new(),
@@ -751,10 +762,10 @@ impl Game {
         let bars = seen
             .into_iter()
             .map(|i| &self.mobs[i])
-            .filter(|m| m.alive() && m.hostile)
+            .filter(|m| m.alive() && m.hostile && self.is_elite(m))
             .filter_map(|m| {
                 let t = self.data.creatures.get(&m.entry)?;
-                (t.rank >= 1).then(|| crate::big_bars::Bar {
+                Some(crate::big_bars::Bar {
                     guid: m.guid,
                     name: t.name.clone(),
                     health: m.health,
@@ -963,6 +974,23 @@ impl Game {
             .map(|(_, g)| g)
     }
 
+    /// An elite (its template's rank) or a run's boss.
+    fn is_elite(&self, m: &Mob) -> bool {
+        m.boss || self.data.creatures.get(&m.entry).is_some_and(|t| t.rank >= 1)
+    }
+
+    /// The nearest living hostile elite or boss in range, whichever way the player faces.
+    fn nearest_elite(&self, now: Instant) -> Option<u64> {
+        let me = self.player.pos;
+        self.mobs
+            .iter()
+            .filter(|m| m.alive() && m.hostile && self.is_elite(m))
+            .map(|m| (dist2d(m.here(now), me), m.guid))
+            .filter(|&(d, _)| d <= TARGET_RANGE)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, g)| g)
+    }
+
     fn mob_index(&self, guid: u64) -> Option<usize> {
         self.mobs.iter().position(|m| m.guid == guid)
     }
@@ -971,19 +999,23 @@ impl Game {
         if self.player.dead_until.is_some() || !self.in_run() {
             return;
         }
-        // Keep a living target; otherwise take the nearest foe in front.
+        // Keep a living target; otherwise take the nearest foe in front. An elite or a boss in
+        // range is the target before any other.
+        let elite = self.nearest_elite(now);
         let keep = self
             .player
             .target
             .and_then(|g| self.mob_index(g))
             .filter(|&i| {
                 let m = &self.mobs[i];
-                m.alive() && dist2d(m.here(now), self.player.pos) <= TARGET_RANGE
+                m.alive()
+                    && dist2d(m.here(now), self.player.pos) <= TARGET_RANGE
+                    && (elite.is_none() || self.is_elite(m))
             });
         let target = match keep {
             Some(i) => i,
             None => {
-                let new = self.auto_target(now);
+                let new = elite.or_else(|| self.auto_target(now));
                 if new != self.player.target {
                     let mut fl = Fields::default();
                     fl.guid(f::TARGET, new.unwrap_or(0));
@@ -1094,10 +1126,18 @@ impl Game {
         self.send(opcode::SMSG_ATTACKSTOP, &packets::attack_stop(guid, self.player.guid));
         self.player.target = None;
         let entry = self.mobs[i].entry;
+        let elite = self.is_elite(&self.mobs[i]);
         self.quest_kill(entry, guid);
         self.drop_loot(entry);
         self.grant_meta_xp(self.meta_kill_xp(level));
-        let xp = (kill_xp(level) as f32 * (1.0 + self.gear(gear::GearStat::Experience))) as u32;
+        let worth = if elite { ELITE_XP } else { 1.0 };
+        let xp = (kill_xp(level) as f32 * worth * (1.0 + self.gear(gear::GearStat::Experience)))
+            as u32;
+        // An elite's spoils: a choice of items, as a chest's, once the world can pause.
+        if elite && self.in_run() {
+            let name = self.data.creatures[&entry].name.clone();
+            self.elite_drops.push(name);
+        }
         // The soul and the gold drop at the corpse and come back to the player.
         let copper = self.gold_for(level);
         let at = self.mobs[i].pos;
@@ -1291,7 +1331,8 @@ impl Game {
             if let Some(t) = self.player.target.take() {
                 self.send(opcode::SMSG_ATTACKSTOP, &packets::attack_stop(self.player.guid, t));
             }
-            self.player.casting = None;
+            // The cast in hand is cut, and the client told: else its cast bar stays up.
+            self.cancel_cast();
         }
     }
 }
@@ -1599,7 +1640,7 @@ impl Game {
     /// auto-cast picking its next spell.
     fn tick_spells(&mut self, now: Instant) {
         if self.player.dead_until.is_some() {
-            self.player.casting = None;
+            self.cancel_cast();
             self.missiles.clear();
         }
         if self.player.casting.as_ref().is_some_and(|c| now >= c.done) {

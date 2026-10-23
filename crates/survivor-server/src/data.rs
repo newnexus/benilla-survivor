@@ -160,9 +160,15 @@ const FACTION_MONSTER: u32 = 14;
 
 /// A survivor's quests want many more kills than 1.12's: this many times, up to what the quest
 /// log's 6-bit counter can show. Gather quests want only this many times as many.
-const QUEST_KILLS_TIMES: u32 = 6;
+const QUEST_KILLS_TIMES: u32 = 4;
 const QUEST_GATHER_TIMES: u32 = 2;
 const QUEST_KILLS_MAX: u32 = 60;
+
+/// The survivor's own starting spells, in place of 1.12's: `(class, 1.12's spell, ours)` on the
+/// same button, and `(class, button, spell)` added. A mage starts with Frostbolt and Fire Blast,
+/// not Fireball.
+const START_SWAPS: &[(u8, u32, u32)] = &[(8, 133, 116)];
+const START_ADDS: &[(u8, u8, u32)] = &[(8, 4, 2136)];
 
 /// A quest objective naming a game object rather than a creature: its entry with this bit, as
 /// `SMSG_QUEST_QUERY_RESPONSE` and `SMSG_QUESTUPDATE_ADD_KILL` carry it (`quests.tsv` too).
@@ -224,6 +230,40 @@ impl WorldData {
     /// of the warrior's and the rogue's. A class's trainer spells and starting spells that share
     /// a name are one chain, ranked by their "Rank N"; a starting rank no trainer teaches joins
     /// the class's list (at level 1) so its next rank is known as its upgrade.
+    fn survivor_starts(&mut self) {
+        for &(class, from, to) in START_SWAPS {
+            for a in self.start_actions.iter_mut() {
+                if a.0 == class && a.2 == from && a.3 == 0 {
+                    a.2 = to;
+                }
+            }
+            // The 1.12 starting rank no trainer taught still sells, from level 1.
+            if !self.class_spells.iter().any(|c| c.class == class && c.spell == from) {
+                self.class_spells.push(ClassSpell {
+                    class,
+                    spell: from,
+                    first: from,
+                    rank: 1,
+                    req_level: 1,
+                });
+            }
+        }
+        for &(class, button, spell) in START_ADDS {
+            self.start_actions.push((class, button, spell, 0));
+        }
+        // A spell started with is had from level 1.
+        let starts: Vec<(u8, u32)> = START_SWAPS
+            .iter()
+            .map(|&(c, _, s)| (c, s))
+            .chain(START_ADDS.iter().map(|&(c, _, s)| (c, s)))
+            .collect();
+        for c in &mut self.class_spells {
+            if starts.contains(&(c.class, c.spell)) {
+                c.req_level = 1;
+            }
+        }
+    }
+
     fn link_rank_chains(&mut self) {
         let rank_of = |s: &SpellInfo| -> u32 {
             s.rank_text
@@ -672,6 +712,7 @@ impl WorldData {
                 num(r.get(3)),
             ));
         }
+        d.survivor_starts();
         d.link_rank_chains();
         // A town's people offer only what the server answers: the quest givers keep their mark
         // (`UNIT_NPC_FLAG_QUESTGIVER`), vendors and trainers stay plain townsfolk for now.

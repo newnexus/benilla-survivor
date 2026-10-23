@@ -12,17 +12,18 @@ use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use survivor_server::armory::{self, Action, Armory, Row};
 
-const INK: Color = Color::srgb(0.2, 0.12, 0.04);
-const HEADING: Color = Color::srgb(0.1, 0.05, 0.0);
-const SHADOW: Color = Color::srgb(0.35, 0.3, 0.25);
-const TAB: Color = Color::srgba(0.25, 0.15, 0.06, 0.25);
-const TAB_ON: Color = Color::srgba(0.45, 0.25, 0.05, 0.6);
-const ROW: Color = Color::srgba(0.3, 0.2, 0.08, 0.12);
-const ROW_WORN: Color = Color::srgba(0.75, 0.55, 0.1, 0.35);
+/// The quest window's look: a dark tinted page, white text, gold headings.
+const INK: Color = crate::quest_panel::WHITE;
+const HEADING: Color = crate::GOLD;
+const SHADOW: Color = Color::srgb(0.45, 0.43, 0.4);
+const TAB: Color = Color::srgba(1.0, 1.0, 1.0, 0.04);
+const TAB_ON: Color = Color::srgba(0.85, 0.65, 0.25, 0.22);
+const ROW: Color = Color::srgba(1.0, 1.0, 1.0, 0.04);
+const ROW_WORN: Color = Color::srgba(0.85, 0.65, 0.25, 0.18);
 const BUTTON_RED: Color = Color::srgb(0.5, 0.04, 0.02);
 const BUTTON_EDGE: Color = Color::srgb(0.75, 0.6, 0.25);
-/// The survivor stats' ink on parchment: a deep gold.
-const OWN_INK: Color = Color::srgb(0.45, 0.28, 0.0);
+/// The survivor stats: gold.
+const OWN_INK: Color = Color::srgb(1.0, 0.82, 0.0);
 const PANEL_Z: i32 = crate::SCREEN_Z - 12;
 const WHEEL_LINE: f32 = 40.0;
 
@@ -87,7 +88,6 @@ enum Press {
 struct Shown {
     root: Option<Entity>,
     key: Option<(u64, u16, u32, Option<u64>)>,
-    parchment: Option<Handle<Image>>,
     star: Option<Handle<Image>>,
 }
 
@@ -145,10 +145,6 @@ fn show_armory(
     }
     let Some(library) = &screen.library else { return };
     let library = library.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let parchment = shown
-        .parchment
-        .get_or_insert_with(|| images.add(crate::quest_panel::parchment()))
-        .clone();
     if shown.star.is_none() {
         shown.star = library
             .blp("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
@@ -171,7 +167,7 @@ fn show_armory(
     let vh = height / 100.0;
     let open = unfolded.0;
     shown.root =
-        Some(spawn(&mut commands, &a, (slot, open, scroll), &parchment, star, &icons, &fonts, vh));
+        Some(spawn(&mut commands, &a, (slot, open, scroll), star, &icons, &fonts, vh));
     shown.key = Some(key);
 }
 
@@ -180,7 +176,6 @@ fn spawn(
     commands: &mut Commands,
     a: &Armory,
     (slot, open, scroll): (u16, Option<u64>, f32),
-    parchment: &Handle<Image>,
     star: Option<Handle<Image>>,
     icons: &[(u32, Option<Handle<Image>>)],
     (font, title_font): &(Handle<Font>, Handle<Font>),
@@ -216,7 +211,6 @@ fn spawn(
         .with_children(|root| {
             root.spawn((
                 ArmorySheet,
-                ImageNode::new(parchment.clone()).with_mode(NodeImageMode::Stretch),
                 Node {
                     width: Val::Vh(150.0),
                     max_width: Val::Vw(94.0),
@@ -224,8 +218,12 @@ fn spawn(
                     flex_direction: FlexDirection::Column,
                     padding: UiRect::all(Val::Vh(2.5)),
                     row_gap: Val::Vh(1.5),
+                    border: UiRect::all(Val::Px(1.5)),
+                    border_radius: BorderRadius::all(Val::Vh(1.2)),
                     ..default()
                 },
+                BackgroundColor(crate::quest_panel::PAGE),
+                BorderColor::all(crate::quest_panel::PAGE_EDGE),
             ))
             .with_children(|sheet| {
                 // The heading and the X.
@@ -352,11 +350,10 @@ fn spawn_row(
             TextColor(color),
         )
     };
-    // On parchment: common in ink, the rarer in their colour, deepened a little to read.
+    // Common in white, the rarer in their colour.
     let name_color = match r.rarity {
         _ if r.seen_only => SHADOW,
         0 => INK,
-        1 => Color::srgb(0.05, 0.55, 0.0),
         r => crate::rarity_color(r),
     };
     let mut item = list.spawn((
@@ -546,6 +543,41 @@ fn item_tooltip(
 }
 
 fn spawn_tooltip(commands: &mut Commands, r: &Row, font: Handle<Font>, vh: f32) {
+    commands
+        .spawn((
+            ItemTooltip,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(-1000.0),
+                top: Val::Px(-1000.0),
+                ..tooltip_node()
+            },
+            BackgroundColor(TIP_BACK),
+            BorderColor::all(TIP_EDGE),
+            GlobalZIndex(PANEL_Z + 20),
+            Pickable::IGNORE,
+        ))
+        .with_children(|tip| tooltip_lines(tip, r, &font, vh));
+}
+
+/// An item tooltip's box: the game's dark blue, a grey edge.
+pub(crate) fn tooltip_node() -> Node {
+    Node {
+        flex_direction: FlexDirection::Column,
+        min_width: Val::Vh(22.0),
+        padding: UiRect::axes(Val::Vh(1.2), Val::Vh(0.9)),
+        row_gap: Val::Vh(0.15),
+        border: UiRect::all(Val::Vh(0.25)),
+        border_radius: BorderRadius::all(Val::Vh(0.7)),
+        ..default()
+    }
+}
+pub(crate) const TOOLTIP_BACK: Color = TIP_BACK;
+pub(crate) const TOOLTIP_EDGE: Color = TIP_EDGE;
+
+/// An item tooltip's lines, as the game draws them: the name in its rarity's colour, where it is
+/// worn and what it is, armour or damage, its stats, its durability.
+pub(crate) fn tooltip_lines(tip: &mut ChildSpawnerCommands, r: &Row, font: &Handle<Font>, vh: f32) {
     let text = |s: &str, size: f32, color: Color| {
         (
             Text::new(s.to_owned()),
@@ -574,27 +606,8 @@ fn spawn_tooltip(commands: &mut Commands, r: &Row, font: Handle<Font>, vh: f32) 
     if r.upgrades > 0 {
         name.push_str(&format!(" +{}", r.upgrades));
     }
-    commands
-        .spawn((
-            ItemTooltip,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(-1000.0),
-                top: Val::Px(-1000.0),
-                flex_direction: FlexDirection::Column,
-                min_width: Val::Vh(22.0),
-                padding: UiRect::axes(Val::Vh(1.2), Val::Vh(0.9)),
-                row_gap: Val::Vh(0.15),
-                border: UiRect::all(Val::Vh(0.25)),
-                border_radius: BorderRadius::all(Val::Vh(0.7)),
-                ..default()
-            },
-            BackgroundColor(TIP_BACK),
-            BorderColor::all(TIP_EDGE),
-            GlobalZIndex(PANEL_Z + 20),
-            Pickable::IGNORE,
-        ))
-        .with_children(|tip| {
+    {
+        {
             let colour = TIP_NAME[usize::from(r.rarity.min(4))];
             tip.spawn((text(&name, 2.6, colour), Pickable::IGNORE));
             for (left, right) in &lines {
@@ -614,7 +627,8 @@ fn spawn_tooltip(commands: &mut Commands, r: &Row, font: Handle<Font>, vh: f32) 
                     }
                 });
             }
-        });
+        }
+    }
 }
 
 fn press(

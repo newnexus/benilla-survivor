@@ -14,7 +14,7 @@ pub struct Tab {
 }
 
 /// One item in a tab.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     /// The owned item's id, 0 for one only seen.
     pub key: u64,

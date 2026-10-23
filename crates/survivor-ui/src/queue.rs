@@ -3,6 +3,9 @@
 //! then the ones after it, the line moving on as each is cast. In town, and on a run paused with
 //! the game menu, it is the player's order to set: click a spell, then the place to move it to.
 //! In town it folds away into a small tab, opened and closed with Alt.
+//!
+//! Each step of the live queue is animated: the spell just cast rises, grows and fades from the
+//! front, the ones behind it slide forward, and it drops back in at its new place as it fades in.
 
 use std::collections::HashMap;
 
@@ -15,16 +18,19 @@ use survivor_server::bar;
 const ICON: f32 = 5.2;
 const GAP: f32 = 0.8;
 const LIFT: f32 = 14.5;
-/// How long the spell just cast flashes (s).
-const FLASH: f32 = 0.4;
+/// How long one step of the live queue takes (s); how far the spell cast rises, and how much it
+/// grows, as shares of an icon.
+const STEP_SECS: f32 = 0.35;
+const RISE: f32 = 1.2;
+const GROW: f32 = 0.6;
 const FRAME: Color = Color::srgba(0.35, 0.3, 0.2, 0.9);
 const NEXT: Color = Color::srgb(1.0, 0.82, 0.0);
 const BACK: Color = Color::srgba(0.0, 0.0, 0.0, 0.45);
 
 pub(crate) fn plugin(app: &mut App) {
-    app.init_resource::<FlashAt>()
+    app.init_resource::<Slide>()
         .add_systems(Startup, watch_frames)
-        .add_systems(Update, (show_strip, drag_strip, flash_fired));
+        .add_systems(Update, (show_strip, drag_strip, slide_icons).chain());
 }
 
 fn watch_frames(mut frames: ResMut<benilla_app::SurvivorFrames>) {
@@ -51,6 +57,8 @@ struct Shown {
     open: bool,
     folded: bool,
     icons: HashMap<u32, Handle<Image>>,
+    /// The spells as last drawn on a run, left to right: where each step's icons come from.
+    order: Vec<u32>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -64,7 +72,7 @@ fn show_strip(
     time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut shown: Local<Shown>,
-    mut flash: ResMut<FlashAt>,
+    mut slide: ResMut<Slide>,
 ) {
     let height = window.single().map_or(720.0, Window::height);
     let q = bar::current().filter(|_| objects.player().is_some());
@@ -87,8 +95,21 @@ fn show_strip(
     if q.spells.is_empty() {
         return;
     }
-    if let Some(f) = q.fired.and_then(|f| q.spells.iter().position(|&s| s == f)) {
-        flash.0 = Some((f, time.elapsed_secs()));
+    // On a run, from the next spell round; setting the order, as it stands.
+    let n = q.spells.len();
+    let start = if q.editable { 0 } else { q.next % n };
+    let order: Vec<u32> = (0..n).map(|k| q.spells[(start + k) % n]).collect();
+    let before = std::mem::replace(&mut shown.order, if q.editable { Vec::new() } else { order.clone() });
+    // A cast on a run: each icon slides from where it stood, the cast one from the front.
+    slide.moves.clear();
+    if let Some(fired) = q.fired.filter(|_| !q.editable && before.len() == n) {
+        slide.at = time.elapsed_secs();
+        for (j, &spell) in order.iter().enumerate() {
+            let Some(i) = before.iter().position(|&s| s == spell) else { continue };
+            if i != j || spell == fired {
+                slide.moves.push(((start + j) % n, i as f32 - j as f32, spell == fired));
+            }
+        }
     }
     // Before the game data has loaded there are no icons yet: the strip is built again until
     // every icon is there.
@@ -197,9 +218,6 @@ fn show_strip(
                 Pickable::IGNORE,
             ))
             .with_children(|row| {
-                // On a run: from the next spell round. Setting the order: as it stands.
-                let n = q.spells.len();
-                let start = if q.editable { 0 } else { q.next % n };
                 for k in 0..n {
                     let i = (start + k) % n;
                     let spell = q.spells[i];
@@ -242,25 +260,49 @@ fn show_strip(
         });
 }
 
-/// The spell just cast: its place and when, for its flash.
+/// The step under way: when it began, and each moving icon (its place in the queue, how many
+/// places to its right it set off from, and whether it is the spell cast).
 #[derive(Resource, Default)]
-struct FlashAt(Option<(usize, f32)>);
+struct Slide {
+    at: f32,
+    moves: Vec<(usize, f32, bool)>,
+}
 
-/// The spell just cast swells and settles.
-fn flash_fired(
-    flash: Res<FlashAt>,
+/// The step: the icons behind slide forward a place; the spell cast rises, grows and fades from
+/// the front in the first half, then drops into its new place, fading in.
+fn slide_icons(
+    slide: Res<Slide>,
     time: Res<Time<Real>>,
-    mut icons: Query<(&SlotIcon, &mut UiTransform)>,
+    mut icons: Query<(&SlotIcon, &mut UiTransform, Option<&mut ImageNode>)>,
 ) {
-    let now = time.elapsed_secs();
-    for (s, mut tf) in &mut icons {
-        let k = match flash.0 {
-            Some((i, at)) if i == s.0 && now - at < FLASH => 1.0 - (now - at) / FLASH,
-            _ => 0.0,
+    let t = ((time.elapsed_secs() - slide.at) / STEP_SECS).clamp(0.0, 1.0);
+    let ease = |x: f32| 1.0 - (1.0 - x) * (1.0 - x);
+    let place = ICON + GAP;
+    for (s, mut tf, img) in &mut icons {
+        let (x, y, scale, alpha) = match slide.moves.iter().find(|m| m.0 == s.0) {
+            Some(&(_, from, false)) if t < 1.0 => (from * place * (1.0 - ease(t)), 0.0, 1.0, 1.0),
+            Some(&(_, from, true)) if t < 1.0 => {
+                if t < 0.5 {
+                    let u = ease(t * 2.0);
+                    (from * place, -RISE * ICON * u, 1.0 + GROW * u, 1.0 - u)
+                } else {
+                    let u = ease(t * 2.0 - 1.0);
+                    (0.0, -ICON * (1.0 - u), 1.0, u)
+                }
+            }
+            _ => (0.0, 0.0, 1.0, 1.0),
         };
-        let want = Vec2::splat(1.0 + 0.35 * k);
-        if tf.scale != want {
-            tf.scale = want;
+        let want = Val2::new(Val::Vh(x), Val::Vh(y));
+        if tf.translation != want {
+            tf.translation = want;
+        }
+        if tf.scale != Vec2::splat(scale) {
+            tf.scale = Vec2::splat(scale);
+        }
+        if let Some(mut img) = img {
+            if img.color.alpha() != alpha {
+                img.color.set_alpha(alpha);
+            }
         }
     }
 }

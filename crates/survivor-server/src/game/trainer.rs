@@ -136,7 +136,7 @@ impl Game {
                 }
             })
             .collect();
-        self.trainer_open = Some(crate::trainer::post(name, self.money, rows));
+        self.trainer_open = Some(crate::trainer::post(name, self.money, self.meta.level, rows));
     }
 
     /// The window's answer: buy a rank, take the last one back, or close.
@@ -158,6 +158,10 @@ impl Game {
                 let Some(ranks) = ranks(first) else { return };
                 let bought = self.owned.get(&first).copied().unwrap_or(0);
                 let Some(&(spell, level)) = ranks.get(bought as usize) else { return };
+                // Nothing above the camp level.
+                if level > self.meta.level {
+                    return;
+                }
                 // Six damage skills at most.
                 let damage = |g: &Game, s: u32| g.spell(s).is_some_and(|i| i.kind == SpellKind::Damage);
                 let held = chains
