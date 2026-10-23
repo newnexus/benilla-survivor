@@ -7,13 +7,15 @@
 //! | slot | stat | | slot | stat |
 //! |---|---|---|---|---|
 //! | head | crit chance | | feet | run speed |
-//! | shoulders, weapons | spell and weapon damage | | wrists | a chance to hit one more enemy |
+//! | shoulders, weapons | spell or physical damage | | wrists | a chance to hit one more enemy |
 //! | chest | health | | hands | pickup range |
 //! | waist | cooldowns | | back | experience |
-//! | legs | costs, or a regeneration | | | |
+//! | legs | costs, or regeneration | | | |
 //!
-//! Half the legs lower costs; the other half quicken a resource by their material: cloth mana,
-//! leather mana or energy, mail and plate mana or rage.
+//! Costs and regeneration are of whatever the wearer's class spends: mana, energy or rage. Damage
+//! is spell damage on wands, staves and items with a caster's bonus (intellect, spirit, mana),
+//! physical on the rest.
+//! Half the legs lower costs; the other half quicken the resource.
 //!
 //! Of the armour found, most ([`OWN_ARMOUR_PERCENT`]) is the class's own kind (warriors mail,
 //! rogues leather, the casters cloth); the rest is any other kind, often one the class cannot
@@ -61,9 +63,17 @@ pub(crate) enum GearStat {
     ExtraTarget,
     Pickup,
     Experience,
+    /// Before the split by resource and by damage kind: read from old saves, turned into
+    /// [`Self::Regen`] and [`Self::SpellDamage`] or [`Self::PhysicalDamage`] on load.
     ManaRegen,
     EnergyRegen,
     RageRegen,
+    /// The wearer's own resource quickens: mana, energy, or rage in combat.
+    Regen,
+    /// Spells of any school but physical, heals too.
+    SpellDamage,
+    /// Weapon swings and physical skills.
+    PhysicalDamage,
 }
 
 impl GearStat {
@@ -80,7 +90,7 @@ impl GearStat {
     fn base(self) -> f32 {
         match self {
             Self::Crit => 0.03,
-            Self::Damage => 0.06,
+            Self::Damage | Self::SpellDamage | Self::PhysicalDamage => 0.06,
             Self::Health => 0.12,
             Self::Cooldown => 0.06,
             Self::Cost => 0.08,
@@ -88,18 +98,27 @@ impl GearStat {
             Self::ExtraTarget => 0.15,
             Self::Pickup => 0.2,
             Self::Experience => 0.08,
-            Self::ManaRegen | Self::EnergyRegen | Self::RageRegen => 0.15,
+            Self::ManaRegen | Self::EnergyRegen | Self::RageRegen | Self::Regen => 0.15,
         }
     }
 
-    fn line(self, x: f32) -> String {
+    /// Its line for a wearer whose resource is `power` (`UnitPower` kind: 0 mana, 1 rage,
+    /// 3 energy).
+    fn line(self, x: f32, power: u8) -> String {
         let p = (x * 100.0).round();
+        let resource = match power {
+            1 => "rage",
+            3 => "energy",
+            _ => "mana",
+        };
         match self {
             Self::Crit => format!("+{p}% critical strike chance"),
             Self::Damage => format!("+{p}% damage"),
+            Self::SpellDamage => format!("+{p}% spell damage"),
+            Self::PhysicalDamage => format!("+{p}% physical damage"),
             Self::Health => format!("+{p}% health"),
             Self::Cooldown => format!("-{p}% cooldowns"),
-            Self::Cost => format!("-{p}% mana, rage and energy cost"),
+            Self::Cost => format!("-{p}% {resource} cost"),
             Self::Speed => format!("+{p}% run speed"),
             Self::ExtraTarget => format!("{p}% chance to hit one more enemy"),
             Self::Pickup => format!("+{p}% pickup range"),
@@ -107,6 +126,8 @@ impl GearStat {
             Self::ManaRegen => format!("+{p}% mana regeneration"),
             Self::EnergyRegen => format!("+{p}% energy regeneration"),
             Self::RageRegen => format!("+{:.1} rage a second in combat", x * RAGE_REGEN_SCALE),
+            Self::Regen if power == 1 => Self::RageRegen.line(x, power),
+            Self::Regen => format!("+{p}% {resource} regeneration"),
         }
     }
 
@@ -130,7 +151,7 @@ impl GearStat {
 pub(crate) const RAGE_REGEN_SCALE: f32 = 10.0;
 
 /// In this order in the save file: new stats go at the end.
-const ALL_STATS: [GearStat; 12] = [
+const ALL_STATS: [GearStat; 15] = [
     GearStat::Crit,
     GearStat::Damage,
     GearStat::Health,
@@ -143,6 +164,23 @@ const ALL_STATS: [GearStat; 12] = [
     GearStat::ManaRegen,
     GearStat::EnergyRegen,
     GearStat::RageRegen,
+    GearStat::Regen,
+    GearStat::SpellDamage,
+    GearStat::PhysicalDamage,
+];
+
+/// The stats an item may roll: the old ones only stand in for these.
+const ROLLED_STATS: [GearStat; 10] = [
+    GearStat::Crit,
+    GearStat::Damage,
+    GearStat::Health,
+    GearStat::Cooldown,
+    GearStat::Cost,
+    GearStat::Speed,
+    GearStat::ExtraTarget,
+    GearStat::Pickup,
+    GearStat::Experience,
+    GearStat::Regen,
 ];
 
 /// `ItemSubclass` of armour: cloth, leather, mail, plate.
@@ -209,9 +247,10 @@ impl GearItem {
 
     /// Its stats, a line each, for the item tooltip's description, led by [`STAT_LINES_MARK`]:
     /// the client's tooltip draws them as white stat lines above the item's own instead of a
-    /// quoted gold description.
-    fn description(&self) -> String {
-        let mut lines: Vec<String> = self.stat_values().map(|(s, x)| s.line(x)).collect();
+    /// quoted gold description. `power` is the wearer's resource.
+    fn description(&self, power: u8) -> String {
+        let mut lines: Vec<String> =
+            self.stat_values().map(|(s, x)| s.line(x, power)).collect();
         if self.upgrades > 0 {
             lines.push(format!("Upgraded +{}", self.upgrades));
         }
@@ -366,20 +405,15 @@ impl Game {
     fn roll_item(&mut self, entry: u32) -> GearItem {
         let rarity = self.rarity_of(entry);
         let template = self.data.items.get(&entry);
-        let subclass = template.map_or(0, |t| t.subclass);
         let slot = template
             .and_then(|t| super::super::world::equip_slot(t.inventory_type))
             .unwrap_or(15);
         let mut main = GearStat::of_slot(slot);
-        // Legs: half lower costs, half quicken a resource their material suits.
+        // Legs: half lower costs, half quicken the resource.
         if main == GearStat::Cost && self.rng.next() % 2 == 0 {
-            let choices: &[GearStat] = match subclass {
-                CLOTH => &[GearStat::ManaRegen],
-                LEATHER => &[GearStat::ManaRegen, GearStat::EnergyRegen],
-                _ => &[GearStat::ManaRegen, GearStat::RageRegen],
-            };
-            main = choices[(self.rng.next() % choices.len() as u64) as usize];
+            main = GearStat::Regen;
         }
+        let main = self.fit_stat(entry, main);
         let mut item = GearItem {
             entry,
             rarity,
@@ -398,7 +432,11 @@ impl Game {
             item.stats.truncate(1);
         } else if item.stats.len() < 2 {
             let main = item.stats[0].0;
-            let others: Vec<GearStat> = ALL_STATS.iter().copied().filter(|&s| s != main).collect();
+            let others: Vec<GearStat> = ROLLED_STATS
+                .iter()
+                .map(|&s| self.fit_stat(item.entry, s))
+                .filter(|&s| s != main)
+                .collect();
             let second = others[(self.rng.next() % others.len() as u64) as usize];
             item.stats.push((second, 0.0));
         }
@@ -411,8 +449,42 @@ impl Game {
         if item.stats.is_empty() {
             return;
         }
+        // Saved before the split, or under an older rule: fitted to the present one.
+        for k in 0..item.stats.len() {
+            let s = match item.stats[k].0 {
+                GearStat::Damage | GearStat::SpellDamage | GearStat::PhysicalDamage => {
+                    self.damage_by_item(item.entry)
+                }
+                GearStat::ManaRegen | GearStat::EnergyRegen | GearStat::RageRegen => GearStat::Regen,
+                s => s,
+            };
+            item.stats[k].0 = s;
+        }
+        item.stats.dedup_by_key(|s| s.0);
         self.second_stat(item);
         item.rate(item.rarity);
+    }
+
+    /// `stat` made concrete for `entry`: damage becomes spell damage or physical.
+    fn fit_stat(&self, entry: u32, stat: GearStat) -> GearStat {
+        match stat {
+            GearStat::Damage => self.damage_by_item(entry),
+            s => s,
+        }
+    }
+
+    /// The damage an item gives: spell damage for a wand or a staff, or an item with a caster's
+    /// bonus (intellect, spirit, mana); physical for the rest.
+    fn damage_by_item(&self, entry: u32) -> GearStat {
+        let spell = self.data.items.get(&entry).is_some_and(|t| {
+            (t.class == 2 && matches!(t.subclass, 10 | 19))
+                || t.stats.iter().any(|&(k, v)| v > 0 && matches!(k, 0 | 5 | 6))
+        });
+        if spell {
+            GearStat::SpellDamage
+        } else {
+            GearStat::PhysicalDamage
+        }
     }
 
     /// Whether the player's class wears or wields `entry`.
@@ -490,7 +562,8 @@ impl Game {
             _ => {}
         }
         let shown = worn.unwrap_or(g);
-        lines.extend(shown.stat_values().map(|(s, x)| s.line(x)));
+        let power = self.player.power.kind;
+        lines.extend(shown.stat_values().map(|(s, x)| s.line(x, power)));
         if let Some(t) = t {
             lines.extend(t.stats.iter().filter_map(|&(k, v)| bonus_line(k, v)));
         }
@@ -681,7 +754,8 @@ impl Game {
 
     /// The stats of the chest gear worn now as `entry`, for its tooltip.
     pub(crate) fn item_description(&self, entry: u32) -> Option<String> {
-        self.run_gear.values().find(|g| g.entry == entry).map(GearItem::description)
+        let power = self.player.power.kind;
+        self.run_gear.values().find(|g| g.entry == entry).map(|g| g.description(power))
     }
 
     /// Put what `slot` now holds on the character: the chest gear worn there, or else the
@@ -726,7 +800,7 @@ impl Game {
             let reply = packets::item_query_response_described(
                 entry,
                 self.data.items.get(&entry),
-                &g.description(),
+                &g.description(self.player.power.kind),
             );
             self.send(opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE, &reply);
         }
@@ -871,18 +945,20 @@ impl Game {
         seen_only: bool,
     ) -> crate::armory::Row {
         let t = self.data.items.get(&g.entry);
-        let mut lines = Vec::new();
+        let mut base = Vec::new();
         if let Some(t) = t {
             if t.damage.1 > 0.0 {
-                lines.push(format!("{:.0} - {:.0} damage", t.damage.0, t.damage.1));
+                base.push(format!("{:.0} - {:.0} damage", t.damage.0, t.damage.1));
+                base.push(format!("speed {:.2}", t.delay as f32 / 1000.0));
             } else if t.armor > 0 {
-                lines.push(format!("{} armor", t.armor));
+                base.push(format!("{} armor", t.armor));
             }
         }
-        lines.extend(g.stat_values().map(|(s, x)| s.line(x)));
-        if let Some(t) = t {
-            lines.extend(t.stats.iter().filter_map(|&(k, v)| bonus_line(k, v)));
-        }
+        let power = self.player.power.kind;
+        let own = g.stat_values().map(|(s, x)| s.line(x, power)).collect();
+        let bonus = t.map_or_else(Vec::new, |t| {
+            t.stats.iter().filter_map(|&(k, v)| bonus_line(k, v)).collect()
+        });
         crate::armory::Row {
             key,
             entry: g.entry,
@@ -893,7 +969,9 @@ impl Game {
             favourite,
             worn,
             seen_only,
-            lines,
+            base,
+            own,
+            bonus,
         }
     }
 

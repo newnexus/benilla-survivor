@@ -1006,6 +1006,7 @@ impl Game {
         // No misses in the survivor: every swing lands, a tenth of them (more with crit gear)
         // twice as hard.
         let d = self.rng.range(lo + bonus, hi + bonus).round().max(1.0) as u32;
+        let d = (d as f32 * (1.0 + self.gear(gear::GearStat::PhysicalDamage))).round() as u32;
         let (swing, damage) = if self.rng.unit() < 0.1 + self.gear(gear::GearStat::Crit) {
             (Swing::Crit, d * 2)
         } else {
@@ -1472,7 +1473,13 @@ impl Game {
             self.apply_buff(spell, now);
         }
         let bonus = (self.player.level - 1) as f32 * SPELL_DAMAGE_PER_LEVEL;
-        let more = mods.damage * (1.0 + self.gear(gear::GearStat::Damage));
+        // School 0 is physical: a warrior's or rogue's skill.
+        let kind = if s.school == 0 {
+            gear::GearStat::PhysicalDamage
+        } else {
+            gear::GearStat::SpellDamage
+        };
+        let more = mods.damage * (1.0 + self.gear(kind));
         for e in 0..3 {
             let (effect, base, die) = (s.effects[e], s.base_points[e], s.die_sides[e]);
             let roll = |rng: &mut Rng| {
@@ -1612,10 +1619,9 @@ impl Game {
         if now >= self.next_regen {
             self.next_regen = now + Duration::from_secs(1);
             // Legs may quicken each (`gear`); rage then also comes in combat, in wire tenths.
-            let mana = 1.0 + self.gear(gear::GearStat::ManaRegen);
-            let energy = 1.0 + self.gear(gear::GearStat::EnergyRegen);
-            let rage = (self.gear(gear::GearStat::RageRegen) * gear::RAGE_REGEN_SCALE * 10.0)
-                .round() as u32;
+            let regen = self.gear(gear::GearStat::Regen);
+            let (mana, energy) = (1.0 + regen, 1.0 + regen);
+            let rage = (regen * gear::RAGE_REGEN_SCALE * 10.0).round() as u32;
             let p = &mut self.player.power;
             let before = p.current;
             p.current = match p.kind {

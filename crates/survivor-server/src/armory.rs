@@ -30,8 +30,12 @@ pub struct Row {
     pub worn: bool,
     /// Seen in a chest, never taken home: shown in shadow.
     pub seen_only: bool,
-    /// Armour or damage, and its stats.
-    pub lines: Vec<String>,
+    /// Armour, or damage and speed.
+    pub base: Vec<String>,
+    /// The survivor stats, a line each.
+    pub own: Vec<String>,
+    /// Its own 1.12 bonuses, a line each.
+    pub bonus: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

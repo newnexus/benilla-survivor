@@ -18,15 +18,15 @@ const POINTS_PER_TIER: u32 = 5;
 const EFFECTS: &[(u32, GearStat, f32)] = &[
     // Rogue
     (270, GearStat::Crit, 0.02),         // Malice: 10% at 5
-    (274, GearStat::Damage, 0.06),       // Murder: 12% at 2
-    (382, GearStat::EnergyRegen, 0.20),  // Vigor: 20% energy regeneration
+    (274, GearStat::PhysicalDamage, 0.06),       // Murder: 12% at 2
+    (382, GearStat::Regen, 0.20),  // Vigor: 20% energy regeneration
     (244, GearStat::Speed, 0.06),        // Camouflage: 30% speed at 5
-    (1702, GearStat::Damage, 0.02),      // Deadliness: 10% at 5
+    (1702, GearStat::PhysicalDamage, 0.02),      // Deadliness: 10% at 5
     // Warrior
     (157, GearStat::Crit, 0.03),         // Cruelty: 15% at 5
-    (136, GearStat::Damage, 0.04),       // Two-Handed Weapon Specialization: 4..20%
-    (702, GearStat::Damage, 0.08),       // One-Handed Weapon Specialization: 40% at 5
-    (137, GearStat::RageRegen, 0.10),    // Anger Management: 1 rage a second
+    (136, GearStat::PhysicalDamage, 0.04),       // Two-Handed Weapon Specialization: 4..20%
+    (702, GearStat::PhysicalDamage, 0.08),       // One-Handed Weapon Specialization: 40% at 5
+    (137, GearStat::Regen, 0.10),    // Anger Management: 1 rage a second
 ];
 
 impl Game {

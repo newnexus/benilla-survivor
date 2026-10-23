@@ -57,7 +57,7 @@ impl Game {
     /// What the runes add to a gear stat: Power doubles damage, Haste and Focus give half again.
     pub(super) fn rune_bonus(&self, stat: GearStat) -> f32 {
         match stat {
-            GearStat::Damage if self.rune_on(POWER) => 1.0,
+            GearStat::SpellDamage | GearStat::PhysicalDamage if self.rune_on(POWER) => 1.0,
             GearStat::Speed if self.rune_on(HASTE) => 0.5,
             GearStat::Cooldown if self.rune_on(FOCUS) => 0.5,
             _ => 0.0,

@@ -1,7 +1,9 @@
 //! The collection chest's window: a tab for every equipment slot, and in it every item the
 //! player owns for that slot (favourites first, then what is worn, then the rarest), each with
-//! its upgrades. Items only seen in chests stand in shadow below. A tap wears an item, or takes
-//! it off; the star marks a favourite. The server holds it all ([`survivor_server::armory`]).
+//! its upgrades. Items only seen in chests stand in shadow below. A tap on an item unfolds it:
+//! its survivor stats on one line, its armour and own bonuses on the next, and a button to wear
+//! it or take it off. The star marks a favourite. The server holds it all
+//! ([`survivor_server::armory`]).
 
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::input::touch::Touches;
@@ -18,6 +20,8 @@ const ROW: Color = Color::srgba(0.3, 0.2, 0.08, 0.12);
 const ROW_WORN: Color = Color::srgba(0.75, 0.55, 0.1, 0.35);
 const BUTTON_RED: Color = Color::srgb(0.5, 0.04, 0.02);
 const BUTTON_EDGE: Color = Color::srgb(0.75, 0.6, 0.25);
+/// The survivor stats' ink on parchment: a deep gold.
+const OWN_INK: Color = Color::srgb(0.45, 0.28, 0.0);
 const PANEL_Z: i32 = crate::SCREEN_Z - 12;
 const WHEEL_LINE: f32 = 40.0;
 
@@ -25,8 +29,13 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
         (show_armory, press, scroll_list, block_touch.after(crate::quest_panel::block_touch)),
-    );
+    )
+    .init_resource::<Unfolded>();
 }
+
+/// The item unfolded in the list, by its key.
+#[derive(Resource, Default)]
+struct Unfolded(Option<u64>);
 
 #[derive(Component)]
 struct ArmoryRoot;
@@ -41,6 +50,7 @@ struct ArmorySheet;
 enum Press {
     Tab(u16),
     Item(u64),
+    Wear(u64),
     Favourite(u64),
     Close,
 }
@@ -48,7 +58,7 @@ enum Press {
 #[derive(Default)]
 struct Shown {
     root: Option<Entity>,
-    key: Option<(u64, u16, u32)>,
+    key: Option<(u64, u16, u32, Option<u64>)>,
     parchment: Option<Handle<Image>>,
     star: Option<Handle<Image>>,
 }
@@ -65,6 +75,8 @@ fn show_armory(
     mut selected: Local<Selected>,
     mut pressed_tab: Local<Option<u16>>,
     tabs: Query<(&Press, &Interaction), Changed<Interaction>>,
+    unfolded: Res<Unfolded>,
+    lists: Query<&ScrollPosition, With<ArmoryList>>,
     mut shown: Local<Shown>,
 ) {
     for (p, i) in &tabs {
@@ -91,10 +103,15 @@ fn show_armory(
         .or_else(|| a.tabs.iter().find(|t| !t.rows.is_empty()).map(|t| t.slot))
         .unwrap_or(0);
     selected.0 = Some(slot);
-    let key = (a.id, slot, height as u32);
+    let key = (a.id, slot, height as u32, unfolded.0);
     if shown.key == Some(key) {
         return;
     }
+    // Unfolding an item or posting the tab again keeps the list where it was scrolled.
+    let scroll = match shown.key {
+        Some(k) if k.1 == slot => lists.iter().next().map_or(0.0, |p| p.0.y),
+        _ => 0.0,
+    };
     if let Some(root) = shown.root.take() {
         commands.entity(root).despawn();
     }
@@ -124,7 +141,9 @@ fn show_armory(
     let fonts = (library.font.clone(), library.title_font.clone());
     drop(library);
     let vh = height / 100.0;
-    shown.root = Some(spawn(&mut commands, &a, slot, &parchment, star, &icons, &fonts, vh));
+    let open = unfolded.0;
+    shown.root =
+        Some(spawn(&mut commands, &a, (slot, open, scroll), &parchment, star, &icons, &fonts, vh));
     shown.key = Some(key);
 }
 
@@ -132,7 +151,7 @@ fn show_armory(
 fn spawn(
     commands: &mut Commands,
     a: &Armory,
-    slot: u16,
+    (slot, open, scroll): (u16, Option<u64>, f32),
     parchment: &Handle<Image>,
     star: Option<Handle<Image>>,
     icons: &[(u32, Option<Handle<Image>>)],
@@ -252,7 +271,7 @@ fn spawn(
                         body.spawn((
                             ArmoryList,
                             RelativeCursorPosition::default(),
-                            ScrollPosition::default(),
+                            ScrollPosition(Vec2::new(0.0, scroll)),
                             Node {
                                 flex_grow: 1.0,
                                 flex_direction: FlexDirection::Column,
@@ -271,7 +290,8 @@ fn spawn(
                                 ));
                             }
                             for (r, (_, icon)) in rows.iter().zip(icons) {
-                                spawn_row(list, r, icon.clone(), star.clone(), font, vh);
+                                let unfolded = !r.seen_only && open == Some(r.key);
+                                spawn_row(list, r, unfolded, icon.clone(), star.clone(), font, vh);
                             }
                         });
                     });
@@ -287,6 +307,7 @@ struct ArmoryId(u64);
 fn spawn_row(
     list: &mut ChildSpawnerCommands,
     r: &Row,
+    unfolded: bool,
     icon: Option<Handle<Image>>,
     star: Option<Handle<Image>>,
     font: &Handle<Font>,
@@ -310,12 +331,11 @@ fn spawn_row(
         1 => Color::srgb(0.05, 0.55, 0.0),
         r => crate::rarity_color(r),
     };
-    let mut row = list.spawn((
+    let mut item = list.spawn((
         Node {
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: Val::Vh(1.5),
+            flex_direction: FlexDirection::Column,
             padding: UiRect::all(Val::Vh(0.8)),
+            row_gap: Val::Vh(0.8),
             border_radius: BorderRadius::all(Val::Vh(0.8)),
             flex_shrink: 0.0,
             ..default()
@@ -323,78 +343,144 @@ fn spawn_row(
         BackgroundColor(if r.worn { ROW_WORN } else { ROW }),
     ));
     if !r.seen_only {
-        row.insert((Press::Item(r.key), Button));
+        item.insert((Press::Item(r.key), Button));
     }
-    row.with_children(|row| {
-        // The icon, in shadow for an item only seen.
-        let mut img = ImageNode::default();
-        if let Some(icon) = icon {
-            img = ImageNode::new(icon);
-        }
-        if r.seen_only {
-            img.color = Color::srgb(0.15, 0.15, 0.15);
-        }
-        row.spawn((
-            img,
-            Node {
-                width: Val::Vh(8.0),
-                height: Val::Vh(8.0),
-                flex_shrink: 0.0,
-                ..default()
-            },
-        ));
-        row.spawn(Node {
-            flex_direction: FlexDirection::Column,
-            flex_grow: 1.0,
+    item.with_children(|item| {
+        let mut row = item.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Vh(1.5),
             ..default()
-        })
-        .with_children(|c| {
-            let mut title = r.name.clone();
-            if r.upgrades > 0 {
-                title.push_str(&format!("  +{}", r.upgrades));
-            }
-            c.spawn(text(&title, 3.4, name_color));
-            let sub = if r.seen_only {
-                "Seen in a chest, never brought home".to_owned()
-            } else {
-                r.lines.join("   ")
-            };
-            c.spawn(text(&sub, 2.5, if r.seen_only { SHADOW } else { INK }));
         });
-        if r.worn {
-            row.spawn(text("WORN", 2.8, HEADING));
-        }
-        if !r.seen_only {
-            let mut s = row.spawn((
-                Press::Favourite(r.key),
-                Button,
+        row.with_children(|row| {
+            // The icon, in shadow for an item only seen.
+            let mut img = ImageNode::default();
+            if let Some(icon) = icon {
+                img = ImageNode::new(icon);
+            }
+            if r.seen_only {
+                img.color = Color::srgb(0.15, 0.15, 0.15);
+            }
+            row.spawn((
+                img,
                 Node {
-                    width: Val::Vh(6.0),
-                    height: Val::Vh(6.0),
+                    width: Val::Vh(8.0),
+                    height: Val::Vh(8.0),
                     flex_shrink: 0.0,
                     ..default()
                 },
             ));
-            // The raid-target star, a quarter of the first row of its texture.
-            if let Some(star) = star {
-                s.insert(ImageNode {
-                    image: star,
-                    rect: Some(Rect::new(0.0, 0.0, 64.0, 64.0)),
-                    color: if r.favourite {
-                        Color::WHITE
-                    } else {
-                        Color::srgba(0.2, 0.2, 0.2, 0.45)
-                    },
-                    ..default()
-                });
+            row.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0,
+                ..default()
+            })
+            .with_children(|c| {
+                let mut title = r.name.clone();
+                if r.upgrades > 0 {
+                    title.push_str(&format!("  +{}", r.upgrades));
+                }
+                c.spawn(text(&title, 3.4, name_color));
+                let sub = if r.seen_only {
+                    "Seen in a chest, never brought home".to_owned()
+                } else {
+                    r.base.join("   ")
+                };
+                c.spawn(text(&sub, 2.5, if r.seen_only { SHADOW } else { INK }));
+            });
+            if r.worn {
+                row.spawn(text("WORN", 2.8, HEADING));
             }
+            if !r.seen_only {
+                let mut s = row.spawn((
+                    Press::Favourite(r.key),
+                    Button,
+                    Node {
+                        width: Val::Vh(6.0),
+                        height: Val::Vh(6.0),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                ));
+                // The raid-target star, a quarter of the first row of its texture.
+                if let Some(star) = star {
+                    s.insert(ImageNode {
+                        image: star,
+                        rect: Some(Rect::new(0.0, 0.0, 64.0, 64.0)),
+                        color: if r.favourite {
+                            Color::WHITE
+                        } else {
+                            Color::srgba(0.2, 0.2, 0.2, 0.45)
+                        },
+                        ..default()
+                    });
+                }
+            }
+        });
+        if !unfolded {
+            return;
         }
+        // Unfolded: the survivor stats, then the item's own bonuses, each spaced out, under the
+        // name; the wear button at the right.
+        item.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Vh(2.0),
+            padding: UiRect::left(Val::Vh(9.5)),
+            ..default()
+        })
+        .with_children(|more| {
+            more.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0,
+                row_gap: Val::Vh(0.6),
+                ..default()
+            })
+            .with_children(|lines| {
+                for (stats, ink) in [(&r.own, OWN_INK), (&r.bonus, INK)] {
+                    lines
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: Val::Vh(4.0),
+                            min_height: Val::Vh(3.4),
+                            ..default()
+                        })
+                        .with_children(|l| {
+                            if stats.is_empty() {
+                                l.spawn(text("-", 2.9, SHADOW));
+                            }
+                            for s in stats {
+                                l.spawn(text(s, 2.9, ink));
+                            }
+                        });
+                }
+            });
+            more.spawn((
+                Press::Wear(r.key),
+                Button,
+                Node {
+                    padding: UiRect::axes(Val::Vh(2.0), Val::Vh(0.8)),
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(Val::Vh(0.3)),
+                    border_radius: BorderRadius::all(Val::Vh(0.8)),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                BackgroundColor(BUTTON_RED),
+                BorderColor::all(BUTTON_EDGE),
+            ))
+            .with_children(|b| {
+                b.spawn(text(if r.worn { "Take off" } else { "Wear" }, 3.0, crate::GOLD));
+            });
+        });
     });
 }
 
 fn press(
     buttons: Query<(&Press, &Interaction), Changed<Interaction>>,
     root: Query<&ArmoryId>,
+    mut unfolded: ResMut<Unfolded>,
 ) {
     let Ok(id) = root.single() else { return };
     for (p, i) in &buttons {
@@ -402,7 +488,10 @@ fn press(
             continue;
         }
         match *p {
-            Press::Item(key) => armory::act(id.0, Action::Toggle(key)),
+            Press::Item(key) => {
+                unfolded.0 = if unfolded.0 == Some(key) { None } else { Some(key) };
+            }
+            Press::Wear(key) => armory::act(id.0, Action::Toggle(key)),
             Press::Favourite(key) => armory::act(id.0, Action::Favourite(key)),
             Press::Close => armory::act(id.0, Action::Close),
             Press::Tab(_) => {}
