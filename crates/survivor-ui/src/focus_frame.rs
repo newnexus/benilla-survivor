@@ -1,5 +1,5 @@
 //! The focus frame: the trainer defended or escorted ([`survivor_server::focus`]) in a copy of the
-//! target frame, where the later game puts its focus frame (UIParent TOPLEFT 250, -240). 1.12 has
+//! target frame, under the player frame ([`FOCUS_AT`]). 1.12 has
 //! no focus unit, so the frame is drawn here, from `TargetFrame.xml`'s layout in its own units
 //! (232 x 100), scaled as the player frame is. The portrait is the client's own bake of the unit,
 //! in the `"focus"` slot ([`benilla_app::SURVIVOR_FOCUS`]).
@@ -10,8 +10,9 @@ use std::sync::atomic::Ordering;
 /// The frame measured against: always shown, 232 x 100 units at UIParent TOPLEFT -19, -4.
 const PLAYER_FRAME: &str = "PlayerFrame";
 const PLAYER_AT: Vec2 = Vec2::new(-19.0, 4.0);
-/// Where the later game's focus frame stands (TOPLEFT, y down).
-const FOCUS_AT: Vec2 = Vec2::new(250.0, 240.0);
+/// Where the frame stands (UIParent TOPLEFT, y down): under the player frame, set in a little
+/// (Donis's place; the later game's focus frame stood at 250, 240).
+const FOCUS_AT: Vec2 = Vec2::new(20.0, 84.0);
 const SIZE: Vec2 = Vec2::new(232.0, 100.0);
 /// `UnitSelectionColor` of a friendly unit, which tints the name's band.
 const FRIENDLY: Color = Color::srgb(0.0, 1.0, 0.0);
