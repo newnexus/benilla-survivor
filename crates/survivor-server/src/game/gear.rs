@@ -228,6 +228,21 @@ impl GearItem {
 /// `tooltip_item/render.rs`, marked `// survivor:`).
 const STAT_LINES_MARK: char = '\u{1}';
 
+/// An item's own 1.12 bonus as its tooltip words it: `+3 Agility`.
+fn bonus_line(kind: u32, value: i32) -> Option<String> {
+    let name = match kind {
+        0 => "Mana",
+        1 => "Health",
+        3 => "Agility",
+        4 => "Strength",
+        5 => "Intellect",
+        6 => "Spirit",
+        7 => "Stamina",
+        _ => return None,
+    };
+    Some(format!("{value:+} {name}"))
+}
+
 /// The equipment slot names on a card.
 fn slot_name(slot: u16) -> &'static str {
     match slot {
@@ -476,6 +491,9 @@ impl Game {
         }
         let shown = worn.unwrap_or(g);
         lines.extend(shown.stat_values().map(|(s, x)| s.line(x)));
+        if let Some(t) = t {
+            lines.extend(t.stats.iter().filter_map(|&(k, v)| bonus_line(k, v)));
+        }
         Card {
             spell: 0,
             replaces: None,
@@ -862,6 +880,9 @@ impl Game {
             }
         }
         lines.extend(g.stat_values().map(|(s, x)| s.line(x)));
+        if let Some(t) = t {
+            lines.extend(t.stats.iter().filter_map(|&(k, v)| bonus_line(k, v)));
+        }
         crate::armory::Row {
             key,
             entry: g.entry,

@@ -536,7 +536,7 @@ impl WorldData {
             });
         }
         for r in rows(&dir, "items.tsv") {
-            let i = ItemTemplate {
+            let mut i = ItemTemplate {
                 entry: num(r.first()),
                 class: num(r.get(1)),
                 subclass: num(r.get(2)),
@@ -577,6 +577,10 @@ impl WorldData {
                     res
                 },
             };
+            // An item keeps as many of its own 1.12 bonuses as its quality allows, the biggest:
+            // none for common, one uncommon, two rare, three epic and up.
+            i.stats.sort_by_key(|&(_, v)| std::cmp::Reverse(v));
+            i.stats.truncate([0, 0, 1, 2, 3, 3, 3][i.quality.min(6) as usize]);
             d.items.insert(i.entry, i);
         }
         for r in rows(&dir, "start_items.tsv") {

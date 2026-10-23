@@ -2,6 +2,7 @@
 //! bars. On a run it is the live queue: the spell the auto-cast tries next first, in a gold frame,
 //! then the ones after it, the line moving on as each is cast. In town, and on a run paused with
 //! the game menu, it is the player's order to set: click a spell, then the place to move it to.
+//! In town it folds away into a small tab, opened and closed with Alt.
 
 use std::collections::HashMap;
 
@@ -46,6 +47,9 @@ struct SlotIcon(usize);
 struct Shown {
     version: u64,
     height: f32,
+    /// Whether the player opened the strip in town (Alt), and whether it is drawn folded now.
+    open: bool,
+    folded: bool,
     icons: HashMap<u32, Handle<Image>>,
 }
 
@@ -58,17 +62,24 @@ fn show_strip(
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
     roots: Query<Entity, With<StripRoot>>,
     time: Res<Time<Real>>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut shown: Local<Shown>,
     mut flash: ResMut<FlashAt>,
 ) {
     let height = window.single().map_or(720.0, Window::height);
     let q = bar::current().filter(|_| objects.player().is_some());
+    let in_town = q.as_ref().is_some_and(|q| q.in_town);
+    if in_town && keys.any_just_pressed([KeyCode::AltLeft, KeyCode::AltRight]) {
+        shown.open = !shown.open;
+    }
+    let folded = in_town && !shown.open;
     let version = q.as_ref().map_or(0, |q| q.version);
-    if version == shown.version && height == shown.height {
+    if version == shown.version && height == shown.height && folded == shown.folded {
         return;
     }
     shown.version = version;
     shown.height = height;
+    shown.folded = folded;
     for e in &roots {
         commands.entity(e).despawn();
     }
@@ -94,6 +105,53 @@ fn show_strip(
         Some(h)
     };
     let font = screen.font();
+    if folded {
+        // The folded tab: where the strip would be, its name and the key that opens it.
+        let Some(font) = font else {
+            shown.version = 0;
+            return;
+        };
+        commands
+            .spawn((
+                StripRoot,
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    bottom: Val::Vh(LIFT),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                GlobalZIndex(crate::SCREEN_Z - 60),
+                Pickable::IGNORE,
+            ))
+            .with_children(|root| {
+                root.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Vh(1.2), Val::Vh(0.5)),
+                        border: UiRect::all(Val::Vh(0.2)),
+                        border_radius: BorderRadius::all(Val::Vh(0.8)),
+                        ..default()
+                    },
+                    BackgroundColor(BACK),
+                    BorderColor::all(FRAME),
+                    Pickable::IGNORE,
+                ))
+                .with_children(|tab| {
+                    tab.spawn((
+                        Text::new("Cast order  (Alt)"),
+                        TextFont {
+                            font,
+                            font_size: 2.0 * height / 100.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.85, 0.82, 0.75)),
+                        TextShadow::default(),
+                        Pickable::IGNORE,
+                    ));
+                });
+            });
+        return;
+    }
     commands
         .spawn((
             StripRoot,

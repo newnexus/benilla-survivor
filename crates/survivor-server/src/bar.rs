@@ -15,8 +15,10 @@ pub struct Queue {
     pub fired: Option<u32>,
     /// The place in `spells` the auto-cast tries next.
     pub next: usize,
-    /// In town: the order may be dragged.
+    /// In town, or paused: the order may be dragged.
     pub editable: bool,
+    /// In town: the strip folds away until the player opens it.
+    pub in_town: bool,
 }
 
 static QUEUE: Mutex<Option<Queue>> = Mutex::new(None);
@@ -26,7 +28,13 @@ pub fn current() -> Option<Queue> {
     QUEUE.lock().expect("queue").clone()
 }
 
-pub(crate) fn post(spells: Vec<u32>, fired: Option<u32>, next: usize, editable: bool) {
+pub(crate) fn post(
+    spells: Vec<u32>,
+    fired: Option<u32>,
+    next: usize,
+    editable: bool,
+    in_town: bool,
+) {
     let mut q = QUEUE.lock().expect("queue");
     let version = q.as_ref().map_or(0, |q| q.version) + 1;
     *q = Some(Queue {
@@ -35,6 +43,7 @@ pub(crate) fn post(spells: Vec<u32>, fired: Option<u32>, next: usize, editable: 
         fired,
         next,
         editable,
+        in_town,
     });
 }
 

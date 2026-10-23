@@ -131,7 +131,8 @@ impl Game {
             buttons[first + i] = w;
         }
         self.buttons = buttons;
-        crate::bar::post(self.strip_spells(), fired, b.next, self.queue_editable());
+        let in_town = !self.in_run();
+        crate::bar::post(self.strip_spells(), fired, b.next, self.queue_editable(), in_town);
         if send {
             self.send(opcode::SMSG_ACTION_BUTTONS, &packets::action_buttons(&self.buttons));
         }
