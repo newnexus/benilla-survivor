@@ -15,4 +15,5 @@ benilla-formats = { path = "../benilla-formats", default-features = false }
 flate2 = "1.0"
 
 [dev-dependencies]
+benilla-blp = { path = "../benilla-blp" }
 benilla-mpq = { path = "../benilla-mpq" }
