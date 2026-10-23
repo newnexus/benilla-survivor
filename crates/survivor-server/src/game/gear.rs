@@ -208,7 +208,7 @@ impl GearItem {
     }
 
     /// Its stats, a line each, for the item tooltip's description, led by [`STAT_LINES_MARK`]:
-    /// the client's tooltip draws them as white stat lines under the item's own instead of a
+    /// the client's tooltip draws them as white stat lines above the item's own instead of a
     /// quoted gold description.
     fn description(&self) -> String {
         let mut lines: Vec<String> = self.stat_values().map(|(s, x)| s.line(x)).collect();

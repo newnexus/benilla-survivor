@@ -547,6 +547,13 @@ pub(super) fn render_view_flagged(
                 false,
             )?;
         }
+        // survivor: a description led by U+0001 is the survivor-like's own item stats, one per
+        // line, drawn white above the item's own instead of as quoted flavour text.
+        if let Some(lines) = v.description.strip_prefix('\u{1}') {
+            for line in lines.lines().filter(|l| !l.is_empty()) {
+                add((line.to_owned(), WHITE))?;
+            }
+        }
         // Stats in the display order of `0x808e88` (4,3,7,5,6,1,0, then 8,9,2,10 and zero padding;
         // `0x52c6b0..0x52c801`), not wire order. Deviation: the reference's padding repeats a mana
         // stat once per zero entry; not emulated, since only the internal test ring 6674 has one.
@@ -590,13 +597,6 @@ pub(super) fn render_view_flagged(
                     WHITE,
                     false,
                 )?;
-            }
-        }
-        // survivor: a description led by U+0001 is the survivor-like's own item stats, one per
-        // line, drawn white under the item's own instead of as quoted flavour text.
-        if let Some(lines) = v.description.strip_prefix('\u{1}') {
-            for line in lines.lines().filter(|l| !l.is_empty()) {
-                add((line.to_owned(), WHITE))?;
             }
         }
         // The enchant family, `[0x52c991, 0x52cc69)`: the slot loop, or with no id source at all
