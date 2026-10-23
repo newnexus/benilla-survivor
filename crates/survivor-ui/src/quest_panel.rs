@@ -38,9 +38,11 @@ const FRAME_GOLD: Color = Color::srgb(0.85, 0.65, 0.2);
 const PORTRAIT: f32 = 13.0;
 /// A scrolling area's fade at an edge with more beyond it: its depth in screen heights.
 const FADE: f32 = 7.0;
-/// The fade: a faint gold glint at the very edge, then the page's dark, then nothing.
-const FADE_GLINT: Color = Color::srgba(0.85, 0.65, 0.25, 0.28);
-const FADE_DARK: Color = Color::srgba(0.035, 0.03, 0.025, 0.95);
+/// The fade, a mask over the text: a faint gold glint at the very edge, then the page's own
+/// colour, solid (the text is gone under it), then thinning to nothing (the text comes back).
+const FADE_GLINT: Color = Color::srgba(0.85, 0.65, 0.25, 0.35);
+const FADE_SOLID: Color = Color::srgb(0.035, 0.03, 0.025);
+const FADE_CLEAR: Color = Color::srgba(0.035, 0.03, 0.025, 0.0);
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Talk>()
@@ -264,16 +266,23 @@ fn show_panel(
     shown.panel = wanted;
 }
 
+/// A length in screen heights, shrunk on the PC as the other windows are: sized, not scaled,
+/// so the scrolling lists clip where they show (a scale transform moves the drawing, not the
+/// clipping).
+fn vh(x: f32) -> Val {
+    Val::Vh(x * crate::SHRINK)
+}
+
 /// A dark page of the window.
 fn page(extra: Node) -> impl Bundle {
     (
         Sheet,
         Node {
             flex_direction: FlexDirection::Column,
-            padding: UiRect::all(Val::Vh(3.0)),
-            row_gap: Val::Vh(1.4),
+            padding: UiRect::all(vh(3.0)),
+            row_gap: vh(1.4),
             border: UiRect::all(Val::Px(1.5)),
-            border_radius: BorderRadius::all(Val::Vh(1.2)),
+            border_radius: BorderRadius::all(vh(1.2)),
             ..extra
         },
         BackgroundColor(PAGE),
@@ -283,10 +292,14 @@ fn page(extra: Node) -> impl Bundle {
 
 /// A scrolling column taking what its page leaves (`extra` added to it, its rows `gap` apart),
 /// filled by `fill`, with a fade over each edge.
+///
+/// `fills_page`: the area is exactly what the page leaves (its list scrolls inside it, never
+/// pushing past it); otherwise it is as tall as its list, up to what the page allows.
 fn scroll_area(
     parent: &mut ChildSpawnerCommands,
     extra: impl Bundle,
     gap: Val,
+    fills_page: bool,
     fill: impl FnOnce(&mut ChildSpawnerCommands),
 ) {
     parent
@@ -294,7 +307,9 @@ fn scroll_area(
             flex_direction: FlexDirection::Column,
             flex_grow: 1.0,
             flex_shrink: 1.0,
+            flex_basis: if fills_page { Val::Px(0.0) } else { Val::Auto },
             min_height: Val::Px(0.0),
+            overflow: Overflow::clip_y(),
             ..default()
         })
         .with_children(|w| {
@@ -308,6 +323,7 @@ fn scroll_area(
                         flex_direction: FlexDirection::Column,
                         flex_grow: 1.0,
                         flex_shrink: 1.0,
+                        flex_basis: if fills_page { Val::Px(0.0) } else { Val::Auto },
                         min_height: Val::Px(0.0),
                         row_gap: gap,
                         overflow: Overflow::scroll_y(),
@@ -319,8 +335,9 @@ fn scroll_area(
             for top in [true, false] {
                 let stops = vec![
                     ColorStop::percent(FADE_GLINT, 0.0),
-                    ColorStop::percent(FADE_DARK, 12.0),
-                    ColorStop::percent(Color::NONE, 100.0),
+                    ColorStop::percent(FADE_SOLID, 8.0),
+                    ColorStop::percent(FADE_SOLID, 30.0),
+                    ColorStop::percent(FADE_CLEAR, 100.0),
                 ];
                 w.spawn((
                     Fade { area, top },
@@ -330,7 +347,7 @@ fn scroll_area(
                         right: Val::Px(0.0),
                         top: if top { Val::Px(0.0) } else { Val::Auto },
                         bottom: if top { Val::Auto } else { Val::Px(0.0) },
-                        height: Val::Vh(FADE),
+                        height: vh(FADE),
                         ..default()
                     },
                     BackgroundGradient::from(if top {
@@ -359,12 +376,12 @@ fn button(shade: Shade, width_vh: f32) -> impl Bundle {
         Button,
         Sheet,
         Node {
-            width: Val::Vh(width_vh),
-            height: Val::Vh(8.0),
+            width: vh(width_vh),
+            height: vh(8.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            border: UiRect::all(Val::Vh(0.35)),
-            border_radius: BorderRadius::all(Val::Vh(1.2)),
+            border: UiRect::all(vh(0.35)),
+            border_radius: BorderRadius::all(vh(1.2)),
             ..default()
         },
         BackgroundColor(shade.0),
@@ -391,7 +408,7 @@ fn spawn_panel(
                 ..default()
             },
             TextColor(color),
-            VhText(size_vh),
+            VhText(size_vh * crate::SHRINK),
         )
     };
     let id = panel.id;
@@ -417,41 +434,28 @@ fn spawn_panel(
                     JustifyContent::Center
                 },
                 align_items: AlignItems::Center,
-                column_gap: Val::Vh(2.0),
-                padding: UiRect::left(Val::Vh(if left { 3.0 } else { 0.0 })),
+                column_gap: vh(2.0),
+                padding: UiRect::left(vh(if left { 3.0 } else { 0.0 })),
                 ..default()
             },
             GlobalZIndex(PANEL_Z),
             Pickable::IGNORE,
-            // Shrunk about the screen's centre, then, on the left, slid back to its left edge.
-            UiTransform {
-                translation: Val2::new(
-                    Val::Percent(if left {
-                        -(1.0 - crate::SHRINK) * 50.0
-                    } else {
-                        0.0
-                    }),
-                    Val::Px(0.0),
-                ),
-                scale: Vec2::splat(crate::SHRINK),
-                ..default()
-            },
         ))
         .with_children(|root| {
             // The giver's quests, a tab each, when there is more than one.
             if panel.entries.len() > 1 {
                 root.spawn(page(Node {
-                    width: Val::Vh(30.0),
-                    max_height: Val::Vh(74.0),
+                    width: vh(30.0),
+                    max_height: vh(74.0),
                     align_self: AlignSelf::FlexStart,
-                    margin: UiRect::top(Val::Vh(10.0)),
-                    padding: UiRect::all(Val::Vh(2.0)),
-                    row_gap: Val::Vh(1.0),
+                    margin: UiRect::top(vh(10.0)),
+                    padding: UiRect::all(vh(2.0)),
+                    row_gap: vh(1.0),
                     ..default()
                 }))
                 .with_children(|page| {
                     page.spawn(text("Quests", title_font, 4.0, crate::GOLD));
-                    scroll_area(page, (), Val::Vh(1.0), |tabs| {
+                    scroll_area(page, (), vh(1.0), false, |tabs| {
                     for (k, q) in panel.entries.iter().enumerate() {
                         let mark = match q.kind {
                             PanelKind::Offer => "!",
@@ -462,9 +466,9 @@ fn spawn_panel(
                             Button,
                             Node {
                                 flex_direction: FlexDirection::Row,
-                                column_gap: Val::Vh(1.0),
-                                padding: UiRect::axes(Val::Vh(1.2), Val::Vh(0.8)),
-                                border_radius: BorderRadius::all(Val::Vh(0.8)),
+                                column_gap: vh(1.0),
+                                padding: UiRect::axes(vh(1.2), vh(0.8)),
+                                border_radius: BorderRadius::all(vh(0.8)),
                                 ..default()
                             },
                             BackgroundColor(if k == selected { TAB_ON } else { TAB }),
@@ -485,27 +489,29 @@ fn spawn_panel(
             }
             // The talk: who speaks, the quest, the story as it is told.
             root.spawn(page(Node {
-                width: Val::Vh(84.0),
-                max_width: Val::Vw(52.0),
-                height: Val::Vh(74.0),
+                width: vh(84.0),
+                max_width: Val::Vw(52.0 * crate::SHRINK),
+                height: vh(74.0),
                 ..default()
             }))
             .with_children(|s| {
+                // The heading keeps its height; the scrolling list below takes what is left.
                 s.spawn(Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
-                    column_gap: Val::Vh(2.0),
+                    column_gap: vh(2.0),
+                    flex_shrink: 0.0,
                     ..default()
                 })
                 .with_children(|h| {
                     h.spawn((
                         Node {
-                            width: Val::Vh(PORTRAIT),
-                            height: Val::Vh(PORTRAIT),
+                            width: vh(PORTRAIT),
+                            height: vh(PORTRAIT),
                             flex_shrink: 0.0,
-                            border: UiRect::all(Val::Vh(0.5)),
+                            border: UiRect::all(vh(0.5)),
                             border_radius: BorderRadius::all(Val::Percent(50.0)),
-                            padding: UiRect::all(Val::Vh(0.25)),
+                            padding: UiRect::all(vh(0.25)),
                             ..default()
                         },
                         BorderColor::all(FRAME_GOLD),
@@ -528,7 +534,7 @@ fn spawn_panel(
                         flex_direction: FlexDirection::Column,
                         flex_grow: 1.0,
                         flex_shrink: 1.0,
-                        row_gap: Val::Vh(0.4),
+                        row_gap: vh(0.4),
                         ..default()
                     })
                     .with_children(|names| {
@@ -545,14 +551,14 @@ fn spawn_panel(
                         Button,
                         RED,
                         Node {
-                            width: Val::Vh(6.0),
-                            height: Val::Vh(6.0),
+                            width: vh(6.0),
+                            height: vh(6.0),
                             flex_shrink: 0.0,
                             align_self: AlignSelf::FlexStart,
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
-                            border: UiRect::all(Val::Vh(0.3)),
-                            border_radius: BorderRadius::all(Val::Vh(1.0)),
+                            border: UiRect::all(vh(0.3)),
+                            border_radius: BorderRadius::all(vh(1.0)),
                             ..default()
                         },
                         BackgroundColor(BUTTON_RED),
@@ -567,13 +573,14 @@ fn spawn_panel(
                     Node {
                         height: Val::Px(1.5),
                         width: Val::Percent(100.0),
+                        flex_shrink: 0.0,
                         ..default()
                     },
                     BackgroundColor(PAGE_EDGE),
                 ));
                 // Step one: the story as it is told. Step two takes its place on the same page.
                 if step == Step::Talk {
-                    scroll_area(s, StoryScroll, Val::Px(0.0), |t| {
+                    scroll_area(s, StoryScroll, Val::Px(0.0), true, |t| {
                         t.spawn((Story(e.text.clone()), text("", font, 3.4, WHITE)));
                     });
                     // While the giver talks: go on without waiting.
@@ -591,7 +598,7 @@ fn spawn_panel(
                 }
                 // Then: what to do, what it pays, and the answer.
                 if step == Step::Decide {
-                    scroll_area(s, (), Val::Vh(1.2), |col| {
+                    scroll_area(s, (), vh(1.2), true, |col| {
                         if e.kind == PanelKind::Offer && !e.objectives.is_empty() {
                             col.spawn(text("Quest Objectives", title_font, 4.4, crate::GOLD));
                             col.spawn(text(&e.objectives, font, 3.2, WHITE));
@@ -601,7 +608,7 @@ fn spawn_panel(
                             col.spawn(Node {
                                 flex_direction: FlexDirection::Row,
                                 align_items: AlignItems::Center,
-                                column_gap: Val::Vh(1.0),
+                                column_gap: vh(1.0),
                                 ..default()
                             })
                             .with_children(|line| {
@@ -623,8 +630,8 @@ fn spawn_panel(
                                                 ..default()
                                             },
                                             Node {
-                                                width: Val::Vh(3.0),
-                                                height: Val::Vh(3.0),
+                                                width: vh(3.0),
+                                                height: vh(3.0),
                                                 ..default()
                                             },
                                         ));
@@ -640,7 +647,7 @@ fn spawn_panel(
                             col.spawn(text("Choose your reward:", font, 3.2, DIM));
                             col.spawn(Node {
                                 flex_direction: FlexDirection::Column,
-                                row_gap: Val::Vh(0.8),
+                                row_gap: vh(0.8),
                                 ..default()
                             })
                             .with_children(|list| {
@@ -651,10 +658,10 @@ fn spawn_panel(
                                         Node {
                                             flex_direction: FlexDirection::Row,
                                             align_items: AlignItems::Center,
-                                            column_gap: Val::Vh(1.2),
-                                            padding: UiRect::all(Val::Vh(0.6)),
-                                            border: UiRect::all(Val::Vh(0.3)),
-                                            border_radius: BorderRadius::all(Val::Vh(0.8)),
+                                            column_gap: vh(1.2),
+                                            padding: UiRect::all(vh(0.6)),
+                                            border: UiRect::all(vh(0.3)),
+                                            border_radius: BorderRadius::all(vh(0.8)),
                                             ..default()
                                         },
                                         BorderColor::all(if r.entry == chosen {
@@ -666,8 +673,8 @@ fn spawn_panel(
                                     ));
                                     b.with_children(|row| {
                                         let mut icon = row.spawn(Node {
-                                            width: Val::Vh(5.0),
-                                            height: Val::Vh(5.0),
+                                            width: vh(5.0),
+                                            height: vh(5.0),
                                             ..default()
                                         });
                                         if let Some(h) = icons.get(&r.entry) {
@@ -683,7 +690,7 @@ fn spawn_panel(
                     s.spawn(Node {
                             flex_direction: FlexDirection::Row,
                             justify_content: JustifyContent::SpaceBetween,
-                            column_gap: Val::Vh(2.0),
+                            column_gap: vh(2.0),
                             ..default()
                         })
                         .with_children(|row| {
@@ -718,9 +725,9 @@ fn spawn_panel(
                     RewardPreview,
                     Sheet,
                     Node {
-                        width: Val::Vh(52.0),
+                        width: vh(52.0),
                         align_self: AlignSelf::FlexStart,
-                        margin: UiRect::top(Val::Vh(10.0)),
+                        margin: UiRect::top(vh(10.0)),
                         flex_direction: FlexDirection::Column,
                         ..default()
                     },
@@ -764,13 +771,13 @@ fn show_preview(
     });
     let icon = icon.map(|i| images.add(i));
     *drawn = Some((holder, pick.1));
-    let vh = window.single().map_or(7.2, |w| w.height() / 100.0);
+    let px_vh = window.single().map_or(7.2, |w| w.height() / 100.0);
     commands.entity(holder).despawn_related::<Children>();
     commands.entity(holder).with_children(|p| {
         p.spawn((
             Node {
-                row_gap: Val::Vh(1.0),
-                column_gap: Val::Vh(1.2),
+                row_gap: vh(1.0),
+                column_gap: vh(1.2),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::FlexStart,
                 ..default()
@@ -780,11 +787,11 @@ fn show_preview(
         .with_children(|r| {
             let mut i = r.spawn((
                 Node {
-                    width: Val::Vh(9.0),
-                    height: Val::Vh(9.0),
+                    width: vh(9.0),
+                    height: vh(9.0),
                     flex_shrink: 0.0,
-                    border: UiRect::all(Val::Vh(0.25)),
-                    border_radius: BorderRadius::all(Val::Vh(0.6)),
+                    border: UiRect::all(vh(0.25)),
+                    border_radius: BorderRadius::all(vh(0.6)),
                     ..default()
                 },
                 BorderColor::all(crate::armory::TOOLTIP_EDGE),
@@ -800,7 +807,7 @@ fn show_preview(
                 Pickable::IGNORE,
             ))
             // Larger than the collection's: the window around it is drawn shrunk.
-            .with_children(|tip| crate::armory::tooltip_lines(tip, &row, &font, vh * 1.5));
+            .with_children(|tip| crate::armory::tooltip_lines(tip, &row, &font, px_vh * 1.5 * crate::SHRINK));
         });
     });
 }
