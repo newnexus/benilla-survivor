@@ -1,7 +1,9 @@
 //! The loot feed ([`survivor_server::loot_feed`]): each pickup's icon in a column over the
 //! backpack button, newest at the bottom, a stack's count on it (`x3`). The same item picked up
 //! again while still shown adds to its count. Each fades after a few seconds; one that did not
-//! fit the backpack stands in grey with "Bags full".
+//! fit the backpack stands in grey with "Bags full". While cards are up (a level-up, a chest) the
+//! feed waits, its clock stopped, and shows once they are gone: a kill's loot and its level-up
+//! come together.
 
 use std::collections::HashMap;
 
@@ -43,6 +45,8 @@ struct Feed {
     entries: Vec<Entry>,
     /// Bumped by every change, for a fresh draw.
     version: u64,
+    /// Cards are up: the feed waits.
+    waiting: bool,
 }
 
 #[derive(Component)]
@@ -54,6 +58,18 @@ struct Fades(usize);
 
 fn take_pickups(mut feed: ResMut<Feed>, time: Res<Time<Real>>) {
     let now = time.elapsed_secs();
+    let waiting = survivor_server::picks::offer().is_some();
+    if waiting != feed.waiting {
+        feed.waiting = waiting;
+        feed.version += 1;
+    }
+    if waiting {
+        // The clock stops: each entry's time starts again once the cards are gone.
+        let dt = time.delta_secs();
+        for e in &mut feed.entries {
+            e.at += dt;
+        }
+    }
     let before = feed.entries.len();
     feed.entries.retain(|e| now - e.at < SHOW);
     let mut changed = feed.entries.len() != before;
@@ -102,7 +118,7 @@ fn draw_feed(
     for e in &roots {
         commands.entity(e).despawn();
     }
-    if feed.entries.is_empty() {
+    if feed.entries.is_empty() || feed.waiting {
         return;
     }
     let vh = window.height() / 100.0;
@@ -141,7 +157,8 @@ fn draw_feed(
                 row_gap: Val::Vh(GAP),
                 ..default()
             },
-            GlobalZIndex(crate::SCREEN_Z - 40),
+            // Over the level-up cards too: a kill's loot and its level-up come together.
+            GlobalZIndex(crate::SCREEN_Z + 6),
             Pickable::IGNORE,
         ))
         .with_children(|col| {
