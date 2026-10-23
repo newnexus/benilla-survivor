@@ -62,6 +62,7 @@ impl Game {
             count,
             price,
             level,
+            about: self.food_text(entry),
         })
     }
 

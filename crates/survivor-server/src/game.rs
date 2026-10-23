@@ -306,6 +306,9 @@ pub(crate) struct Game {
     pack: Vec<PackItem>,
     /// Food and drink being taken.
     meals: Vec<meal::Meal>,
+    /// The food buffs, oldest first, and the max mana they have added.
+    foods: Vec<meal::FoodBuff>,
+    food_mana: u32,
     /// What the action bars hold, by role ([`rotation`]).
     bars: rotation::Bars,
     /// The player's cast order, by rank chain (the queue strip), kept in the save.
@@ -541,6 +544,8 @@ impl Game {
             root_counter: 0,
             pack,
             meals: Vec::new(),
+            foods: Vec::new(),
+            food_mana: 0,
             bars: rotation::Bars::default(),
             queue_order: Vec::new(),
             mode: town::mode_at(pos),
@@ -1677,6 +1682,7 @@ impl Game {
 
         if now >= self.next_regen {
             self.next_regen = now + Duration::from_secs(1);
+            self.tick_food_buffs();
             // Legs may quicken each (`gear`); rage then also comes in combat, in wire tenths.
             let regen = self.gear(gear::GearStat::Regen);
             let (mana, energy) = (1.0 + regen, 1.0 + regen);

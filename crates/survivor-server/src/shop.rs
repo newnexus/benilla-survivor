@@ -18,6 +18,8 @@ pub struct Ware {
     pub price: u32,
     /// To buy: the camp level it sells from (above the player's, it shows but cannot be bought).
     pub level: u32,
+    /// What it does when eaten (restores, run buff); empty for what is not food.
+    pub about: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

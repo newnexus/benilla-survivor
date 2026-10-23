@@ -693,7 +693,8 @@ impl Game {
     pub(super) fn apply_gear(&mut self) {
         let base = super::base_health(self.player.class)
             + super::HEALTH_PER_LEVEL * (self.player.level - 1);
-        let max = (base as f32 * (1.0 + self.gear(GearStat::Health))).round() as u32;
+        let max = (base as f32 * (1.0 + self.gear(GearStat::Health))).round() as u32
+            + self.food_max_health();
         if max != self.player.max_health {
             let gained = max.saturating_sub(self.player.max_health);
             self.player.max_health = max;

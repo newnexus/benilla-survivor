@@ -283,6 +283,7 @@ impl Game {
         self.send_money();
         self.end_run_gear(died);
         self.end_run_loot(died);
+        self.end_run_food();
         self.publish_chest_glow();
         // An open level-up pick goes with the run.
         if self.pick.is_some() {
@@ -356,8 +357,9 @@ impl Game {
             .set(f::MAXPOWER1 + pt, max)
             .set(f::POWER1 + pt, self.player.power.current);
         self.values(self.player.guid, fl);
-        // The worn gear's health on top.
-        self.apply_gear();
+        // The worn gear's health and the food buffs on top: max mana was just set afresh.
+        self.food_mana = 0;
+        self.apply_food();
     }
     /// The level gates open to the player, a bit each: their camp (meta) level has reached the
     /// gate's, whatever level the run is at.

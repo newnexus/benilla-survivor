@@ -17,6 +17,8 @@ const SLOT: Color = Color::srgba(1.0, 1.0, 1.0, 0.04);
 const SLOT_LIT: Color = Color::srgba(0.85, 0.65, 0.25, 0.22);
 const SHORT: Color = Color::srgb(1.0, 0.25, 0.2);
 const LOCKED: Color = Color::srgb(1.0, 0.35, 0.35);
+/// What a food does, in the game's green for an item's use line.
+const USE: Color = Color::srgb(0.12, 1.0, 0.0);
 /// Pixels a wheel notch scrolls.
 const WHEEL_LINE: f32 = 40.0;
 
@@ -245,6 +247,9 @@ fn spawn_window(
                         ));
                     }
                 });
+                if !ware.about.is_empty() {
+                    c.spawn((text(font, &ware.about, 2.1 * vh, USE), Pickable::IGNORE));
+                }
             });
         });
     };
