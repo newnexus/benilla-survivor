@@ -39,8 +39,10 @@ const FOLLOW_REACH: f32 = 30.0;
 const FOLLOW_SPEED: f32 = 1.3;
 /// The trainer leaves the player this far outside Deathknell's people (its town radius).
 const HOME_REACH: f32 = 22.0;
-/// The share of the chance each further trainer's spot has of the one before.
-const NEXT_CHANCE: f32 = 0.8;
+/// A run has one trainer to find for sure (while any is still to be freed), a second at this
+/// chance, and never more than [`MOST_TRAINERS`].
+const SECOND_CHANCE: f32 = 0.3;
+const MOST_TRAINERS: usize = 2;
 /// Out of the world: a trainer not at their spot this run.
 const PARK: [f32; 3] = [0.0, 0.0, -500.0];
 /// A watched-over trainer's health: this many times the player's.
@@ -127,8 +129,6 @@ impl Game {
         if self.events.npc.is_empty() {
             return;
         }
-        let freed = (0..EVENTS.len()).filter(|&e| self.freed(e)).count();
-        let mut chance = NEXT_CHANCE.powi(freed as i32);
         let mut order: Vec<usize> = (0..EVENTS.len()).collect();
         for i in (1..order.len()).rev() {
             let j = (self.rng.next() % (i as u64 + 1)) as usize;
@@ -137,19 +137,21 @@ impl Game {
         // `$SURVIVOR_EVENT=<n>`: event n's spot every run and no other, for trying a chain.
         let forced: Option<usize> = std::env::var("SURVIVOR_EVENT").ok().and_then(|v| v.parse().ok());
         self.events.defence = None;
-        for e in order {
-            let on = if self.freed(e) || self.brought_home(e) {
-                false
-            } else if let Some(f) = forced {
-                f == e
-            } else if self.begun(e) {
-                true
-            } else if self.rng.unit() < chance {
-                chance *= NEXT_CHANCE;
-                true
-            } else {
-                false
-            };
+        let open: Vec<usize> = order
+            .into_iter()
+            .filter(|&e| !self.freed(e) && !self.brought_home(e))
+            .collect();
+        // A chain under way comes first (its trainer waits again), then the others in the
+        // shuffled order, up to this run's count.
+        let wanted = if self.rng.unit() < SECOND_CHANCE { 2 } else { 1 };
+        let (begun, rest): (Vec<usize>, Vec<usize>) = open.into_iter().partition(|&e| self.begun(e));
+        let count = begun.len().max(wanted).min(MOST_TRAINERS);
+        let chosen: Vec<usize> = match forced {
+            Some(f) => vec![f],
+            None => begun.into_iter().chain(rest).take(count).collect(),
+        };
+        for e in 0..EVENTS.len() {
+            let on = chosen.contains(&e);
             self.events.active[e] = on;
             if on {
                 eprintln!("survivor: {} can be found this run", self.trainer_name(e));
