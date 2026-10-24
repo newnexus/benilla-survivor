@@ -1,6 +1,6 @@
 //! The talent tree opens in a safe town from level 2 (the stock interface waits for level 10, in
-//! `UIParent.lua`'s `ToggleTalentFrame` and `MainMenuBarMicroButtons.lua`'s
-//! `UpdateTalentButton`). Out on a run it stays shut, and closes if it was open.
+//! `UIParent.lua`'s `ToggleTalentFrame`), from its key: the micro buttons are hidden
+//! ([`crate::action_bar`]). Out on a run it stays shut, and closes if it was open.
 
 use bevy::prelude::*;
 
@@ -19,16 +19,6 @@ function ToggleTalentFrame()
     TalentFrame_LoadUI()
     if TalentFrame_Toggle then TalentFrame_Toggle() end
 end
-function UpdateTalentButton()
-    if not open() then
-        TalentMicroButton:Hide()
-        QuestLogMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMLEFT", 0, 0)
-    else
-        TalentMicroButton:Show()
-        QuestLogMicroButton:SetPoint("BOTTOMLEFT", "TalentMicroButton", "BOTTOMRIGHT", -2, 0)
-    end
-end
-UpdateTalentButton()
 if not open() and TalentFrame and TalentFrame:IsVisible() then HideUIPanel(TalentFrame) end
 "#;
 

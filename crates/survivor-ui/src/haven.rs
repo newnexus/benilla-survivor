@@ -2,8 +2,8 @@
 //! the right-hand bar off its right edge. Nothing is fought in town, and the main bar is the
 //! run's cast queue. They slide back as the player steps out through the barrier.
 //!
-//! In town a click or a tap along the screen's bottom edge brings them back for a while, for the
-//! bags, the map and the talents: they go again once the pointer has been off them for
+//! In town a click or a tap along the screen's bottom edge brings them back for a while
+//! (the backpack is not on them: it has its own corner, [`crate::action_bar`]): they go again once the pointer has been off them for
 //! [`PEEK`] seconds.
 //!
 //! The slide moves the stock frames' own anchors (`SetPoint`), each frame of the animation,
