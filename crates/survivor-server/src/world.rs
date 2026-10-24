@@ -93,6 +93,8 @@ pub(crate) fn serve(listener: TcpListener, keys: Receiver<Key>) {
                 let (roster, data) = (Arc::clone(&roster), Arc::clone(&data));
                 thread::spawn(move || {
                     let _ = session(link, &out, &roster, &data);
+                    // The client gone: so is our player, for the party.
+                    crate::party::left();
                 });
             }
         })
@@ -154,11 +156,13 @@ fn session(
                     continue;
                 };
                 let game = enter_world(out, &c, data)?;
+                crate::party::here(party_hello(&c, game.player.pos, game.player.facing));
                 *playing.lock().expect("game") = Some(game);
                 in_world = Some(c);
             }
             op if is_move(op) => {
                 if body.len() >= 24 {
+                    crate::party::moved(op, &body);
                     let rd = |o: usize| f32::from_le_bytes(body[o..o + 4].try_into().expect("4"));
                     if let Some(g) = playing.lock().expect("game").as_mut() {
                         g.player_moved([rd(8), rd(12), rd(16)], rd(20));
@@ -294,6 +298,9 @@ fn session(
                 let asked = u64::from_le_bytes(asked.try_into().expect("eight bytes"));
                 if let Some(c) = in_world.as_ref().filter(|c| c.guid == asked) {
                     out.send(opcode::SMSG_NAME_QUERY_RESPONSE, &name_response(c))?;
+                } else if let Some(h) = crate::party::hello_of(asked) {
+                    // Another player of the party.
+                    out.send(opcode::SMSG_NAME_QUERY_RESPONSE, &name_response(&party_character(asked, &h)))?;
                 }
             }
             opcode::CMSG_PING => {
@@ -313,6 +320,7 @@ fn session(
                 out.send(opcode::SMSG_LOGOUT_COMPLETE, &[])?;
                 *playing.lock().expect("game") = None;
                 in_world = None;
+                crate::party::left();
             }
             _ => {}
         }
@@ -522,6 +530,57 @@ fn name_response(c: &Character) -> Vec<u8> {
         .u32(c.gender.into())
         .u32(c.class.into());
     b.0
+}
+
+/// Our character as the party sees it, standing at `pos`.
+fn party_hello(c: &Character, pos: [f32; 3], facing: f32) -> crate::party::Hello {
+    crate::party::Hello {
+        name: c.name.clone(),
+        race: c.race,
+        class: c.class,
+        gender: c.gender,
+        skin: c.skin,
+        face: c.face,
+        hair_style: c.hair_style,
+        hair_color: c.hair_color,
+        facial_hair: c.facial_hair,
+        level: c.level,
+        pos,
+        facing,
+    }
+}
+
+/// Another player of the party as a character of ours, under `guid`.
+fn party_character(guid: u64, h: &crate::party::Hello) -> Character {
+    Character {
+        guid,
+        name: h.name.clone(),
+        race: h.race,
+        class: h.class,
+        gender: h.gender,
+        skin: h.skin,
+        face: h.face,
+        hair_style: h.hair_style,
+        hair_color: h.hair_color,
+        facial_hair: h.facial_hair,
+        level: h.level,
+    }
+}
+
+/// Another player of the party, as the client is shown them: their looks where they stand, not
+/// ours to steer.
+pub(crate) fn party_create(guid: u64, h: &crate::party::Hello) -> Update {
+    let mut u = self_create(
+        &party_character(guid, h),
+        &[],
+        (1.0, 2.0, Duration::from_millis(2000)),
+        0,
+        (h.pos, h.facing),
+    );
+    if let Update::Living { self_flag, .. } = &mut u {
+        *self_flag = false;
+    }
+    u
 }
 
 /// `ChrRaces.dbc` Scourge (row 5) male and female display ids.

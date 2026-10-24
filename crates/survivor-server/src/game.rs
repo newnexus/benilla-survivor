@@ -22,6 +22,7 @@ mod hearth;
 mod loot;
 mod meal;
 mod orbs;
+mod party;
 mod pick;
 mod quest;
 mod rotation;
@@ -387,6 +388,9 @@ pub(crate) struct Game {
     chest_loot: Vec<Vec<gear::GearItem>>,
     /// Every item put in a chest or a boss's spoils this run: none is offered twice.
     run_offered: HashSet<u32>,
+    /// The party's other players shown to our client, by guid; whether the roll call was taken.
+    party_shown: HashSet<u64>,
+    party_seen: bool,
     /// Elites and bosses slain whose spoils are still to be offered, by name.
     elite_drops: Vec<String>,
     /// Quest reward items as their previews show them, by entry, until one is taken.
@@ -613,6 +617,8 @@ impl Game {
             chest_asked: None,
             chest_loot: Vec::new(),
             run_offered: HashSet::new(),
+            party_shown: HashSet::new(),
+            party_seen: false,
             elite_drops: Vec::new(),
             reward_rolls: std::collections::HashMap::new(),
             run_gear: gear::RunGear::default(),
@@ -756,6 +762,8 @@ impl Game {
         self.take_queue_move();
         self.take_trainer_action();
         self.take_shop_action();
+        // The others keep moving while our world is paused.
+        self.sync_party();
         self.pause_for_menu();
         if self.paused() {
             return;

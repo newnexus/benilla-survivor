@@ -336,6 +336,7 @@ pub mod town;
 pub mod waves;
 mod wire;
 mod world;
+mod party;
 
 use std::net::TcpListener;
 use std::sync::mpsc;
@@ -369,6 +370,7 @@ pub fn start() -> std::io::Result<Running> {
     let (keys_tx, keys_rx) = mpsc::channel();
     realmd::serve(realmd, world_addr, keys_tx);
     world::serve(world, keys_rx);
+    party::start();
     Ok(Running {
         realmd: realmd_addr,
     })
