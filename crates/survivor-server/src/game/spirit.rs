@@ -4,14 +4,15 @@
 //! Souls are the soul orbs a run picks up, one each; walking back into town alive brings them
 //! all home, dying loses them. Standing by the healer opens its window ([`crate::spirit`]).
 
+use benilla_protocol::messages::opcode;
+
 use super::Game;
 use crate::spirit::{Row, Upgrade};
 
 /// How close the player stands to open the window, and how far to walk off to close it.
 const RANGE: f32 = 4.0;
 const RESET: f32 = 7.0;
-/// The spirit healer's creature entry.
-const SPIRIT_HEALER: u32 = 6491;
+use crate::spirit::quest::SPIRIT_HEALER;
 /// Souls for each level of a reroll, a banish and the rune rate; a rune kind costs one price.
 const REROLL_COSTS: [u32; 3] = [30, 60, 120];
 const BANISH_COSTS: [u32; 3] = [30, 60, 120];
@@ -159,7 +160,34 @@ impl Game {
         {
             return;
         }
-        if healers.iter().any(|&h| super::dist2d(h, me) <= RANGE) {
+        // Its own quest window (offered or handed in) waits until answered or closed.
+        if self.open_panel.is_some() {
+            return;
+        }
+        let near = self
+            .npcs
+            .iter()
+            .filter(|n| n.entry == SPIRIT_HEALER)
+            .find(|n| super::dist2d(n.here(now), me) <= RANGE)
+            .map(|n| n.guid);
+        if let Some(guid) = near {
+            // Its quest speaks first, once per approach; then the upgrades.
+            if self.talked != Some(guid) && self.quest_hello(guid) {
+                self.talked = Some(guid);
+                return;
+            }
+            // Its upgrades stay shut until the wandering ones are brought: still out, it only
+            // says so, once per approach.
+            if !self.quest_done(crate::spirit::quest::ID) {
+                if self.talked != Some(guid) {
+                    self.talked = Some(guid);
+                    self.send(
+                        opcode::SMSG_NOTIFICATION,
+                        &crate::packets::notification(crate::spirit::quest::NOT_YET),
+                    );
+                }
+                return;
+            }
             self.close_quest_panel();
             self.post_spirit();
         }

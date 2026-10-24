@@ -120,14 +120,24 @@ struct Talk {
     start: f32,
     seconds: f32,
     step: Step,
+    /// A broadcast (the spirit healer's): told over and over, whole for [`REPEAT_HOLD`] between.
+    repeat: bool,
 }
+
+/// How long a broadcast stays whole before it begins again, seconds.
+const REPEAT_HOLD: f32 = 2.5;
 
 impl Talk {
     /// How much of the story is out, 0 to 1.
     fn told(&self, now: f32) -> f32 {
+        let seconds = self.seconds.max(0.1);
+        let mut since = now - self.start;
+        if self.repeat {
+            since %= seconds + REPEAT_HOLD;
+        }
         match self.step {
             Step::Decide => 1.0,
-            Step::Talk => ((now - self.start) / self.seconds.max(0.1)).clamp(0.0, 1.0),
+            Step::Talk => (since / seconds).clamp(0.0, 1.0),
         }
     }
 }
@@ -205,12 +215,14 @@ fn show_panel(
                 .filter(|_| spoken)
                 .unwrap_or(read);
             talk.step = Step::Talk;
+            talk.repeat = survivor_server::spirit::quest_broadcasts(e.quest);
         }
     }
     // On to the objectives: the talk ends, or the player goes on.
     let go_on =
         keys.just_pressed(KeyCode::Space) || continues.iter().any(|i| *i == Interaction::Pressed);
-    if line.is_some() && talk.step == Step::Talk && (go_on || now - talk.start >= talk.seconds) {
+    let talked_out = !talk.repeat && now - talk.start >= talk.seconds;
+    if line.is_some() && talk.step == Step::Talk && (go_on || talked_out) {
         talk.step = Step::Decide;
     }
     let wanted = panel.as_ref().map(|p| (p.id, selected, height, talk.step));

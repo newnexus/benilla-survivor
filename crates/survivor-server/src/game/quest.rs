@@ -109,7 +109,8 @@ impl Game {
     pub(super) fn send_giver_statuses(&self) {
         for &i in &self.npcs_shown {
             let n = &self.npcs[i];
-            if self.data.creatures[&n.entry].npc_flags & NPC_QUESTGIVER != 0 {
+            let healer = n.entry == crate::spirit::quest::SPIRIT_HEALER;
+            if healer || self.data.creatures[&n.entry].npc_flags & NPC_QUESTGIVER != 0 {
                 self.send(
                     opcode::SMSG_QUESTGIVER_STATUS,
                     &quest::status(n.guid, self.giver_status(n.entry)),
@@ -423,9 +424,8 @@ impl Game {
         self.quests.done.insert(id);
         self.write_slot(slot);
         self.money += q.money;
-        let mut fl = Fields::default();
-        fl.set(f::PLAYER_COINAGE, self.money);
-        self.values(self.player.guid, fl);
+        // The purse in the corner too, not only the client's coinage field.
+        self.send_money();
         eprintln!("survivor: handed in quest {id} for {} xp", q.xp);
         self.send(opcode::SMSG_QUESTGIVER_QUEST_COMPLETE, &quest::complete(&q, q.xp));
         self.grant_meta_xp(q.xp);

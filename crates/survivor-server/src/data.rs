@@ -597,6 +597,28 @@ impl WorldData {
                 });
             }
         }
+        // The spirit healer's: the wandering souls ([`crate::spirit::quest`]).
+        {
+            use crate::spirit::quest as sq;
+            d.quests.push(Quest {
+                id: sq::ID,
+                level: 3,
+                min_level: 1,
+                prev: 0,
+                giver: sq::SPIRIT_HEALER,
+                ender: sq::SPIRIT_HEALER,
+                xp: sq::XP,
+                money: sq::MONEY,
+                title: sq::TITLE.to_owned(),
+                details: sq::DETAILS.to_owned(),
+                objectives: sq::OBJECTIVES.to_owned(),
+                offer_text: sq::DONE.to_owned(),
+                end_text: String::new(),
+                kills: [(sq::SOULS, sq::COUNT), (0, 0), (0, 0), (0, 0)],
+                objective_texts: [sq::OBJECTIVE.to_owned(), String::new(), String::new(), String::new()],
+                rewards: Vec::new(),
+            });
+        }
         // Only the objects a quest wants.
         for r in rows(&dir, "gathers.tsv") {
             let entry: u32 = num(r.get(1));

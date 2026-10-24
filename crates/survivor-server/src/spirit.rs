@@ -114,3 +114,42 @@ pub mod souls {
         SOULS.store(n, Ordering::Relaxed);
     }
 }
+
+/// Whether quest `id`'s words are the spirit healer's broadcast: the quest window tells them over
+/// and over, and goes on to the objectives only when asked.
+pub fn quest_broadcasts(id: u32) -> bool {
+    id == quest::ID
+}
+
+/// The spirit healer's own quest: the wandering souls (the field souls a run walks through)
+/// gathered for it. Its words come through broken, a message sent over and over that never
+/// quite reaches the living.
+pub(crate) mod quest {
+    use crate::data::OBJECTIVE_GAMEOBJECT;
+
+    /// The spirit healer's creature entry.
+    pub(crate) const SPIRIT_HEALER: u32 = 6491;
+    pub(crate) const ID: u32 = 91_001;
+    /// The objective's target: no creature, no object in the world; a field soul counts it.
+    pub(crate) const SOULS: u32 = OBJECTIVE_GAMEOBJECT | ID;
+    pub(crate) const COUNT: u32 = 30;
+    pub(crate) const XP: u32 = 300;
+    pub(crate) const MONEY: u32 = 10;
+    pub(crate) const TITLE: &str = "...The Wandering... Wandering...";
+    // No number in its words: how many shows only in the objective's count.
+    pub(crate) const DETAILS: &str = "...can... can you hear... living-not-living one... \
+        do you hear...$B$B...souls. Lost ones. They wander... wander under the trees, round and \
+        round... cannot find... the light cannot find them...$B$B...gather. Gather them... many. \
+        Walk through them... they follow you... bring... bring them...$B$B...can... can you \
+        hear... living-not-living one... do you hear...$B$B...souls. Lost ones. They wander... \
+        wander...$B$B...gather. Gather th-- ...bring them to the li--$B$B...can... can you \
+        hear...";
+    pub(crate) const OBJECTIVES: &str = "...the wandering ones... beyond the fire wall... walk \
+        through... gather... gather... ...the wandering ones... gath--";
+    pub(crate) const OBJECTIVE: &str = "...wandering ones... gathered...";
+    /// Said by the healer, its upgrades still shut, while the quest is out.
+    pub(crate) const NOT_YET: &str = "...not yet... the wandering ones... not yet... not y--";
+    pub(crate) const DONE: &str = "...the light... the light holds them now...$B$B...you \
+        heard... you heard...$B$B...the light holds them now... the light hol--$B$B...can... \
+        can you hear...";
+}

@@ -30,6 +30,9 @@ const SCATTER: f32 = 0.9;
 /// this part of a kill, comes back this long after it was taken, and shows within this range.
 const FIELD_EVERY: usize = 1;
 const FIELD_OFFSET: f32 = 2.5;
+/// Souls round each such home, spread evenly about it and each further out than the last.
+const FIELD_PER_HOME: usize = 2;
+const FIELD_STEP_OUT: f32 = 3.0;
 const FIELD_WORTH: f32 = 0.25;
 const FIELD_BACK: Duration = Duration::from_secs(180);
 const FIELD_SHOW: f32 = 80.0;
@@ -85,7 +88,8 @@ impl Game {
         }
     }
 
-    /// The zone's souls, beside every [`FIELD_EVERY`]th creature home outside the towns.
+    /// The zone's souls, [`FIELD_PER_HOME`] beside every [`FIELD_EVERY`]th creature home outside the
+    /// towns.
     fn lay_field_souls(&mut self) {
         let spots: Vec<([f32; 3], f32)> = self
             .data
@@ -93,17 +97,15 @@ impl Game {
             .iter()
             .filter(|s| crate::town::town_at(s.pos).is_none())
             .step_by(FIELD_EVERY)
-            .map(|s| {
-                // Off to a side of the home that differs from one to the next.
-                let a = (s.guid as f32 * 2.4).rem_euclid(std::f32::consts::TAU);
-                (
-                    [
-                        s.pos[0] + FIELD_OFFSET * a.cos(),
-                        s.pos[1] + FIELD_OFFSET * a.sin(),
-                        s.pos[2] + FLOAT,
-                    ],
-                    a,
-                )
+            .flat_map(|s| {
+                (0..FIELD_PER_HOME).map(move |k| {
+                    // Off to a side of the home that differs from one to the next.
+                    let a = (s.guid as f32 * 2.4
+                        + k as f32 * std::f32::consts::TAU / FIELD_PER_HOME as f32)
+                        .rem_euclid(std::f32::consts::TAU);
+                    let out = FIELD_OFFSET + k as f32 * FIELD_STEP_OUT;
+                    ([s.pos[0] + out * a.cos(), s.pos[1] + out * a.sin(), s.pos[2] + FLOAT], a)
+                })
             })
             .collect();
         for (home, phase) in spots {
@@ -160,8 +162,11 @@ impl Game {
             for (i, pos) in near {
                 let s = &mut self.field_souls[i];
                 s.back = Some(now + FIELD_BACK);
+                let id = s.id;
+                // The spirit healer's quest counts the wandering ones as they are walked through.
+                self.quest_kill(crate::spirit::quest::SOULS, id);
                 self.orbs.push(Loose {
-                    id: s.id,
+                    id,
                     kind: Kind::Soul,
                     amount: worth,
                     pos,
