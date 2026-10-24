@@ -1,6 +1,7 @@
 //! The main bar cut down to its twelve ability buttons between the two gryphons; everything
 //! else on it (page arrows, micro buttons, the performance meter, the bag slots) hidden, and the
-//! backpack on its own in the screen's bottom-right corner. A bigger bag replaces the backpack
+//! backpack on its own in the screen's bottom-right corner, larger, showing how many of its slots
+//! are free. A bigger bag replaces the backpack
 //! when picked up, so there is never a second bag to place.
 //!
 //! The stock bar (`MainMenuBar.xml`) is 1024 wide, four 256 strips of art, the buttons on the
@@ -43,10 +44,32 @@ at("MainMenuXPBarTexture0", MainMenuExpBar, -128, 3)
 at("MainMenuXPBarTexture1", MainMenuExpBar, 128, 3)
 at("MainMenuBarLeftEndCap", MainMenuBarArtFrame, -288, 0)
 at("MainMenuBarRightEndCap", MainMenuBarArtFrame, 288, 0)
+-- The backpack alone in the corner, larger, its free slots counted on it (the stock button's
+-- own count, as on a stack) whenever the bag changes.
 local bag = MainMenuBarBackpackButton
+bag:SetScale(%SCALE%)
 bag:ClearAllPoints()
-bag:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -8, 8)
+bag:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -8 / %SCALE%, 8 / %SCALE%)
+local function count_free()
+    local free = 0
+    for i = 1, GetContainerNumSlots(0) do
+        if not GetContainerItemInfo(0, i) then free = free + 1 end
+    end
+    MainMenuBarBackpackButtonCount:SetText(free)
+    MainMenuBarBackpackButtonCount:Show()
+end
+if not SurvivorBagCounter then
+    local f = CreateFrame("Frame", "SurvivorBagCounter")
+    f:RegisterEvent("BAG_UPDATE")
+    f:RegisterEvent("PLAYER_ENTERING_WORLD")
+    f:SetScript("OnEvent", function() SurvivorBagCounter.count() end)
+end
+SurvivorBagCounter.count = count_free
+count_free()
 "#;
+
+/// The backpack's size against the stock button's (37).
+const BAG_SCALE: f32 = 1.6;
 
 pub(crate) fn plugin(app: &mut App) {
     app.add_systems(Update, cut_bar);
@@ -63,6 +86,6 @@ fn cut_bar(
     }
     if !*said {
         *said = true;
-        frames.run.push(BAR.to_owned());
+        frames.run.push(BAR.replace("%SCALE%", &BAG_SCALE.to_string()));
     }
 }
