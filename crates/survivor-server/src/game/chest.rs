@@ -16,8 +16,9 @@ const ASK_RESET: f32 = 7.0;
 /// The first chest of a run costs this much gold, each one after 75% more than the one before.
 const FIRST_PRICE: u32 = 50;
 const PRICE_GROWTH: f32 = 1.75;
-/// Copper a kill drops, per level of the creature: between these.
-const GOLD_PER_LEVEL: (u32, u32) = (3, 8);
+/// Copper a kill drops, per level of the creature: between these (a fifth of the first rate,
+/// 3 to 8, which Donis found five times too much).
+const GOLD_PER_LEVEL: (f32, f32) = (0.6, 1.6);
 
 /// A chest in the world.
 pub(crate) struct Chest {
@@ -59,9 +60,10 @@ pub(crate) fn money_text(gold: u32) -> String {
 impl Game {
     /// A kill's gold, copper: it drops as a coin ([`super::orbs`]).
     pub(super) fn gold_for(&mut self, level: u32) -> u32 {
-        let per = GOLD_PER_LEVEL.0
-            + (self.rng.next() % u64::from(GOLD_PER_LEVEL.1 - GOLD_PER_LEVEL.0 + 1)) as u32;
-        level.max(1) * per
+        let worth = level.max(1) as f32 * self.rng.range(GOLD_PER_LEVEL.0, GOLD_PER_LEVEL.1);
+        // The part piece goes up or down by chance, so a low level's kills still average right.
+        let whole = worth.floor();
+        whole as u32 + u32::from(self.rng.unit() < worth - whole)
     }
 
     /// `copper` more in the purse, said as WoW says a loot.
