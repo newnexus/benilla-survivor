@@ -190,7 +190,8 @@ impl Game {
         self.place_extras(&mut buttons);
         self.buttons = buttons;
         let in_town = !self.in_run();
-        crate::bar::post(self.strip_spells(), fired, b.next, self.queue_editable(), in_town);
+        let hidden = !in_town && self.pick.is_some();
+        crate::bar::post(self.strip_spells(), fired, b.next, self.queue_editable(), in_town, hidden);
         if send {
             self.send(opcode::SMSG_ACTION_BUTTONS, &packets::action_buttons(&self.buttons));
         }
@@ -242,10 +243,10 @@ impl Game {
         list
     }
 
-    /// The order may be changed in town, and on a run while it is paused: the game menu, a
-    /// level-up's cards, a chest's.
+    /// The order may be changed in town, and on a run while it is paused by the game menu or a
+    /// quest window; not over a level-up's or a chest's cards, where the strip is hidden.
     pub(super) fn queue_editable(&self) -> bool {
-        !self.in_run() || self.paused()
+        !self.in_run() || (self.paused() && self.pick.is_none())
     }
 
     /// The strip's answer: the spell at `from` moved to `to` (in town, or paused); the order is kept.

@@ -1,7 +1,8 @@
 //! The cast queue strip ([`survivor_server::bar`]), in a row between the character and the action
 //! bars. On a run it is the live queue: the spell the auto-cast tries next first, in a gold frame,
 //! then the ones after it, the line moving on as each is cast. In town, and on a run paused with
-//! the game menu, it is the player's order to set: click a spell, then the place to move it to.
+//! the game menu, it is the player's order to set (over a level-up's or chest's cards it is
+//! hidden): click a spell, then the place to move it to.
 //! In town it folds away into a small tab, opened and closed with Alt.
 //!
 //! Each step of the live queue is animated: the spell just cast rises, grows and fades from the
@@ -75,13 +76,13 @@ fn show_strip(
     mut slide: ResMut<Slide>,
 ) {
     let height = window.single().map_or(720.0, Window::height);
-    let q = bar::current().filter(|_| objects.player().is_some());
+    let q = bar::current().filter(|q| objects.player().is_some() && !q.hidden);
     let in_town = q.as_ref().is_some_and(|q| q.in_town);
     if in_town && keys.any_just_pressed([KeyCode::AltLeft, KeyCode::AltRight]) {
         shown.open = !shown.open;
     }
     let folded = in_town && !shown.open;
-    let version = q.as_ref().map_or(0, |q| q.version);
+    let version = bar::current().map_or(0, |q| q.version);
     if version == shown.version && height == shown.height && folded == shown.folded {
         return;
     }
@@ -185,8 +186,8 @@ fn show_strip(
                 row_gap: Val::Vh(0.5),
                 ..default()
             },
-            // Over the level-up and chest cards while the order may be changed, so it can be
-            // clicked there; else under every window.
+            // Over the game menu while the order may be changed, so it can be clicked there; else
+            // under every window.
             GlobalZIndex(if q.editable { crate::SCREEN_Z + 5 } else { crate::SCREEN_Z - 60 }),
             Pickable::IGNORE,
         ))

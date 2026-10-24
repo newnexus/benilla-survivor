@@ -19,6 +19,8 @@ pub struct Queue {
     pub editable: bool,
     /// In town: the strip folds away until the player opens it.
     pub in_town: bool,
+    /// A level-up's or a chest's cards are up: the strip is not drawn, so as not to cover them.
+    pub hidden: bool,
 }
 
 static QUEUE: Mutex<Option<Queue>> = Mutex::new(None);
@@ -34,6 +36,7 @@ pub(crate) fn post(
     next: usize,
     editable: bool,
     in_town: bool,
+    hidden: bool,
 ) {
     let mut q = QUEUE.lock().expect("queue");
     let version = q.as_ref().map_or(0, |q| q.version) + 1;
@@ -44,6 +47,7 @@ pub(crate) fn post(
         next,
         editable,
         in_town,
+        hidden,
     });
 }
 

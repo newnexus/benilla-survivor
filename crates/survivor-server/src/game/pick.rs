@@ -418,7 +418,7 @@ impl Game {
     /// creature stands where it is.
     pub(super) fn freeze(&mut self, now: Instant) {
         self.cancel_cast();
-        // The queue strip opens for changing the order (posted again as it closes, in thaw).
+        // The queue strip opens for changing the order, or hides behind cards (posted again in thaw).
         self.arrange_bars(false, None);
         self.root_counter += 1;
         self.send(
