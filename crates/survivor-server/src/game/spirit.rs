@@ -209,7 +209,7 @@ impl Game {
             row(
                 Upgrade::Reroll,
                 "Reroll",
-                format!("Deal the level-up cards again: {} a run", h.rerolls + 1),
+                format!("Deal the level-up cards again: {} a run", self.rerolls_a_run() + 1),
                 r"Interface\Icons\Spell_Nature_Reincarnation",
             ),
             row(
@@ -287,6 +287,12 @@ impl Game {
                 self.post_spirit();
             }
         }
+    }
+
+    /// A run's rerolls: those bought, and one more given for the healer's second quest (on top,
+    /// so it is never refunded for souls).
+    pub(super) fn rerolls_a_run(&self) -> u32 {
+        self.healer.rerolls + u32::from(self.quest_done(crate::spirit::quest::ID2))
     }
 
     /// A soul orb picked up on a run.

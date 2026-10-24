@@ -268,7 +268,7 @@ impl Game {
         self.run_kills = 0;
         crate::run_summary::close();
         // The spirit healer's charges, afresh.
-        self.rerolls_left = self.healer.rerolls;
+        self.rerolls_left = self.rerolls_a_run();
         self.banishes_left = self.healer.banishes;
         self.banished.clear();
         self.player.level = 1;

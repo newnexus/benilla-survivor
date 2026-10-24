@@ -250,7 +250,7 @@ impl Game {
             }
         }
         // A login out on a run starts with the healer's charges, as a run walked into does.
-        self.rerolls_left = self.healer.rerolls;
+        self.rerolls_left = self.rerolls_a_run();
         self.banishes_left = self.healer.banishes;
         eprintln!(
             "survivor: loaded {} (meta level {}, {} items, {} seen)",

@@ -654,6 +654,9 @@ fn spawn_panel(
                         if e.xp > 0 {
                             col.spawn(text(&format!("Experience: {}", e.xp), font, 3.2, WHITE));
                         }
+                        for perk in &e.perks {
+                            col.spawn(text(perk, font, 3.2, WHITE));
+                        }
                         // The items to choose one of: click one, the gold frame is the choice.
                         if !e.rewards.is_empty() {
                             col.spawn(text("Choose your reward:", font, 3.2, DIM));

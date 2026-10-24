@@ -597,7 +597,7 @@ impl WorldData {
                 });
             }
         }
-        // The spirit healer's: the wandering souls ([`crate::spirit::quest`]).
+        // The spirit healer's two: the wandering souls ([`crate::spirit::quest`]).
         {
             use crate::spirit::quest as sq;
             d.quests.push(Quest {
@@ -616,6 +616,24 @@ impl WorldData {
                 end_text: String::new(),
                 kills: [(sq::SOULS, sq::COUNT), (0, 0), (0, 0), (0, 0)],
                 objective_texts: [sq::OBJECTIVE.to_owned(), String::new(), String::new(), String::new()],
+                rewards: Vec::new(),
+            });
+            d.quests.push(Quest {
+                id: sq::ID2,
+                level: 3,
+                min_level: 1,
+                prev: sq::ID,
+                giver: sq::SPIRIT_HEALER,
+                ender: sq::SPIRIT_HEALER,
+                xp: sq::XP2,
+                money: sq::MONEY2,
+                title: sq::TITLE2.to_owned(),
+                details: sq::DETAILS2.to_owned(),
+                objectives: sq::OBJECTIVES2.to_owned(),
+                offer_text: sq::DONE2.to_owned(),
+                end_text: String::new(),
+                kills: [(sq::SOULS, sq::COUNT2), (0, 0), (0, 0), (0, 0)],
+                objective_texts: [sq::OBJECTIVE2.to_owned(), String::new(), String::new(), String::new()],
                 rewards: Vec::new(),
             });
         }

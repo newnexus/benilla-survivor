@@ -278,6 +278,7 @@ impl Game {
                     objectives: self.fill(&q.objectives),
                     money: q.money,
                     xp: q.xp,
+                    perks: crate::spirit::quest::perk(id).map(str::to_owned).into_iter().collect(),
                     // Equipment only: a reward goes into the collection.
                     rewards: q
                         .rewards

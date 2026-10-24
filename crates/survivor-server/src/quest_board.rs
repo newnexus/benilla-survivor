@@ -36,6 +36,8 @@ pub struct Entry {
     pub objectives: String,
     pub money: u32,
     pub xp: u32,
+    /// Anything else it gives, a line each ("Reroll: +1 a run").
+    pub perks: Vec<String>,
     /// The items to choose one of on handing it in.
     pub rewards: Vec<RewardItem>,
 }

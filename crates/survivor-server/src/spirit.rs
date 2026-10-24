@@ -149,6 +149,30 @@ pub(crate) mod quest {
     pub(crate) const OBJECTIVE: &str = "...wandering ones... gathered...";
     /// Said by the healer, its upgrades still shut, while the quest is out.
     pub(crate) const NOT_YET: &str = "...not yet... the wandering ones... not yet... not y--";
+    /// Part two: its mind a little clearer for the souls brought, more of them; it pays a reroll.
+    pub(crate) const ID2: u32 = 91_002;
+    pub(crate) const COUNT2: u32 = 40;
+    pub(crate) const XP2: u32 = 450;
+    pub(crate) const MONEY2: u32 = 15;
+    pub(crate) const TITLE2: &str = "The Wandering Ones";
+    pub(crate) const DETAILS2: &str = "You. Yes... you. The one who walked through them.\
+        $B$BSince they came into the light, the fog in me has thinned. I can... think. A \
+        little. I remember this yard. Some of the names on the stones, I remember.$B$BBut \
+        there are more out there. Many more. They drift between the trees and do not know \
+        they are dead... as you once did not.$B$BGather them again, living-not-living one. \
+        Bring them home, and I will give you something of mine: another look at fate, when \
+        the cards fall wrong.$B$B...the fog... it is still there... at the edges...";
+    pub(crate) const OBJECTIVES2: &str = "Gather the wandering souls beyond the barrier, then \
+        return to the spirit healer.";
+    pub(crate) const OBJECTIVE2: &str = "Wandering souls gathered";
+    pub(crate) const DONE2: &str = "More of them home. More of me, too.$B$BI said I would give \
+        you something. Here: when the cards are dealt to you and you do not like them, ask \
+        again. Once more, each time you go out.$B$BThank you, $N. I had forgotten that word. \
+        Thank... you.";
+    /// What a quest of the healer's gives beside XP and money, for the quest window.
+    pub(crate) fn perk(id: u32) -> Option<&'static str> {
+        (id == ID2).then_some("Reroll: +1 a run")
+    }
     pub(crate) const DONE: &str = "...the light... the light holds them now...$B$B...you \
         heard... you heard...$B$B...the light holds them now... the light hol--$B$B...can... \
         can you hear...";

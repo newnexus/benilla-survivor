@@ -14,8 +14,8 @@ const SIZE: f32 = 0.042;
 const GAP: f32 = 0.006;
 const HEAD: f32 = 2.9;
 const RANGE: f32 = 70.0;
-/// The icons are 30% see-through, rim and all.
-const OPACITY: f32 = 0.7;
+/// The icons show at 30%, rim and all: a hint over the head, not a sign.
+const OPACITY: f32 = 0.3;
 const RIM: Color = Color::srgba(0.85, 0.65, 0.2, OPACITY);
 
 pub(crate) fn plugin(app: &mut App) {
