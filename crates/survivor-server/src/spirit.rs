@@ -147,7 +147,7 @@ pub(crate) mod quest {
     pub(crate) const OBJECTIVES: &str = "...the wandering ones... beyond the fire wall... walk \
         through... gather... gather... ...the wandering ones... gath--";
     pub(crate) const OBJECTIVE: &str = "...wandering ones... gathered...";
-    /// Said by the healer, its upgrades still shut, while the quest is out.
+    /// Said by the healer, its upgrades still shut, while the first quest is out.
     pub(crate) const NOT_YET: &str = "...not yet... the wandering ones... not yet... not y--";
     /// Part two: its mind a little clearer for the souls brought, more of them; it pays a reroll.
     pub(crate) const ID2: u32 = 91_002;
@@ -165,6 +165,8 @@ pub(crate) mod quest {
     pub(crate) const OBJECTIVES2: &str = "Gather the wandering souls beyond the barrier, then \
         return to the spirit healer.";
     pub(crate) const OBJECTIVE2: &str = "Wandering souls gathered";
+    /// Said instead of its upgrades while the second quest is out.
+    pub(crate) const NOT_YET2: &str = "Not yet. There are more of them out there. Bring them home first.";
     pub(crate) const DONE2: &str = "More of them home. More of me, too.$B$BI said I would give \
         you something. Here: when the cards are dealt to you and you do not like them, ask \
         again. Once more, each time you go out.$B$BThank you, $N. I had forgotten that word. \

@@ -176,15 +176,17 @@ impl Game {
                 self.talked = Some(guid);
                 return;
             }
-            // Its upgrades stay shut until the wandering ones are brought: still out, it only
-            // says so, once per approach.
-            if !self.quest_done(crate::spirit::quest::ID) {
+            // Its upgrades stay shut until both its quests are handed in: till then it only says
+            // so, once per approach, broken before the first and clearer after it.
+            if !self.quest_done(crate::spirit::quest::ID2) {
                 if self.talked != Some(guid) {
                     self.talked = Some(guid);
-                    self.send(
-                        opcode::SMSG_NOTIFICATION,
-                        &crate::packets::notification(crate::spirit::quest::NOT_YET),
-                    );
+                    let line = if self.quest_done(crate::spirit::quest::ID) {
+                        crate::spirit::quest::NOT_YET2
+                    } else {
+                        crate::spirit::quest::NOT_YET
+                    };
+                    self.send(opcode::SMSG_NOTIFICATION, &crate::packets::notification(line));
                 }
                 return;
             }
