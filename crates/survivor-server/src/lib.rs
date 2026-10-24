@@ -302,6 +302,7 @@ mod game;
 mod packets;
 pub mod picks;
 pub mod quest_board;
+pub mod greeting;
 pub mod events;
 pub mod shop;
 pub mod spirit;

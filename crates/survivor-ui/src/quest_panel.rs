@@ -20,22 +20,22 @@ use survivor_server::quest_board::{self, Answer, Panel, PanelKind};
 pub(crate) const PAGE: Color = Color::srgba(0.035, 0.03, 0.025, 0.86);
 pub(crate) const PAGE_EDGE: Color = Color::srgba(0.8, 0.62, 0.28, 0.5);
 pub(crate) const WHITE: Color = Color::srgb(0.95, 0.93, 0.88);
-const DIM: Color = Color::srgb(0.68, 0.65, 0.58);
+pub(crate) const DIM: Color = Color::srgb(0.68, 0.65, 0.58);
 const TAB: Color = Color::srgba(1.0, 1.0, 1.0, 0.04);
-const TAB_ON: Color = Color::srgba(0.85, 0.65, 0.25, 0.22);
+pub(crate) const TAB_ON: Color = Color::srgba(0.85, 0.65, 0.25, 0.22);
 const BUTTON_RED: Color = Color::srgb(0.5, 0.04, 0.02);
 const BUTTON_RED_LIT: Color = Color::srgb(0.68, 0.08, 0.04);
 const BUTTON_DARK: Color = Color::srgb(0.16, 0.14, 0.12);
 const BUTTON_DARK_LIT: Color = Color::srgb(0.26, 0.23, 0.2);
 const BUTTON_EDGE: Color = Color::srgb(0.75, 0.6, 0.25);
-const PANEL_Z: i32 = crate::SCREEN_Z - 10;
+pub(crate) const PANEL_Z: i32 = crate::SCREEN_Z - 10;
 /// A mouse wheel notch scrolls this many pixels.
 const WHEEL_LINE: f32 = 40.0;
 /// Without a spoken line, the story appears at about this many letters a second, a speaking pace.
-const LETTERS_PER_SECOND: f32 = 16.0;
+pub(crate) const LETTERS_PER_SECOND: f32 = 16.0;
 /// The portrait's frame: its gold, and its size in screen heights.
-const FRAME_GOLD: Color = Color::srgb(0.85, 0.65, 0.2);
-const PORTRAIT: f32 = 13.0;
+pub(crate) const FRAME_GOLD: Color = Color::srgb(0.85, 0.65, 0.2);
+pub(crate) const PORTRAIT: f32 = 13.0;
 /// A scrolling area's fade at an edge with more beyond it: its depth in screen heights.
 const FADE: f32 = 7.0;
 /// The fade, a mask over the text: a faint gold glint at the very edge, then the page's own
@@ -68,7 +68,7 @@ struct PanelRoot;
 
 /// The speaking giver's portrait on the window, filled once the client has baked it.
 #[derive(Component)]
-struct TalkerPortrait;
+pub(crate) struct TalkerPortrait;
 
 /// The story's scrolling area: kept on its newest line as it is told.
 #[derive(Component)]
@@ -281,12 +281,12 @@ fn show_panel(
 /// A length in screen heights, shrunk on the PC as the other windows are: sized, not scaled,
 /// so the scrolling lists clip where they show (a scale transform moves the drawing, not the
 /// clipping).
-fn vh(x: f32) -> Val {
+pub(crate) fn vh(x: f32) -> Val {
     Val::Vh(x * crate::SHRINK)
 }
 
 /// A dark page of the window.
-fn page(extra: Node) -> impl Bundle {
+pub(crate) fn page(extra: Node) -> impl Bundle {
     (
         Sheet,
         Node {

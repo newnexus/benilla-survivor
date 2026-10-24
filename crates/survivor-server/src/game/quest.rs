@@ -34,11 +34,11 @@ pub(crate) struct QuestLog {
 }
 
 impl Game {
-    fn quest(&self, id: u32) -> Option<&Quest> {
+    pub(super) fn quest(&self, id: u32) -> Option<&Quest> {
         self.data.quests.iter().find(|q| q.id == id)
     }
 
-    fn npc_entry(&self, guid: u64) -> Option<u32> {
+    pub(super) fn npc_entry(&self, guid: u64) -> Option<u32> {
         self.npcs.iter().find(|n| n.guid == guid).map(|n| n.entry)
     }
 
@@ -156,17 +156,23 @@ impl Game {
         let Some(entry) = self.npc_entry(guid) else {
             return false;
         };
+        let list = self.giver_quests(entry);
+        if list.is_empty() {
+            return false;
+        }
+        self.open_quest_panel(guid, &list);
+        true
+    }
+
+    /// `entry`'s quests for the player: those to hand in first, then those to take.
+    pub(super) fn giver_quests(&self, entry: u32) -> Vec<(u32, PanelKind)> {
         let mut list: Vec<(u32, PanelKind)> = self
             .rewardable(entry)
             .iter()
             .map(|q| (q.id, PanelKind::Reward))
             .collect();
         list.extend(self.available(entry).iter().map(|q| (q.id, PanelKind::Offer)));
-        if list.is_empty() {
-            return false;
-        }
-        self.open_quest_panel(guid, &list);
-        true
+        list
     }
 
     /// In town, a quest giver within reach speaks up once, until the player walks off.
@@ -193,21 +199,32 @@ impl Game {
                 .is_none_or(|n| dist2d(n.here(now), me) > TALK_RESET);
             // Walking off leaves the window open, and its answer still counts from afar; once it
             // is answered or closed, the giver may speak again after the player has walked off.
-            if far && self.open_panel.is_none() {
-                self.talked = None;
+            // A greeting closes as they walk off; a quest window stays.
+            if far {
+                self.close_greeting();
+                if self.open_panel.is_none() {
+                    self.talked = None;
+                }
             }
             return;
         }
         let near = self
             .npcs
             .iter()
-            .filter(|n| self.data.creatures[&n.entry].npc_flags & NPC_QUESTGIVER != 0)
+            .filter(|n| {
+                self.data.creatures[&n.entry].npc_flags & NPC_QUESTGIVER != 0
+                    || (!run && self.greets(n.entry))
+            })
             .filter(|n| !run || self.event_trainer_out(n.entry))
             .map(|n| (dist2d(n.here(now), me), n.guid))
             .filter(|&(d, _)| d <= TALK_RANGE)
             .min_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((_, guid)) = near {
-            if self.quest_hello(guid) {
+            // A profession trainer at home greets first; anyone else opens their quests.
+            let home_trainer = !run && self.npc_entry(guid).is_some_and(|e| self.greets(e));
+            if home_trainer && self.greet(guid) {
+                self.talked = Some(guid);
+            } else if !home_trainer && self.quest_hello(guid) {
                 self.talked = Some(guid);
                 // Out on a run the world stops while they talk.
                 if run {
@@ -230,6 +247,7 @@ impl Game {
     /// A quest window left open (it stays when the player walks off) gives way to the window of
     /// whoever the player walks up to next: a trainer, the spirit healer, the collection.
     pub(super) fn close_quest_panel(&mut self) {
+        self.close_greeting();
         if self.open_panel.take().is_some() {
             quest_board::clear();
             self.talked = None;
@@ -250,7 +268,7 @@ impl Game {
     }
 
     /// Put `quests` of giver `guid` on the survivor's quest window.
-    fn open_quest_panel(&mut self, guid: u64, quests: &[(u32, PanelKind)]) {
+    pub(super) fn open_quest_panel(&mut self, guid: u64, quests: &[(u32, PanelKind)]) {
         // The reward items' survivor stats are rolled as they are first shown, so the preview is
         // what comes.
         for &(id, _) in quests {

@@ -17,6 +17,7 @@ mod aura;
 mod chest;
 mod gather;
 mod gear;
+mod greet;
 mod hearth;
 mod loot;
 mod meal;
@@ -370,6 +371,8 @@ pub(crate) struct Game {
     upgrades: upgrade::Upgrades,
     /// The quest window open on the screen: its board id and the giver.
     open_panel: Option<(u64, u64)>,
+    /// A profession trainer's greeting open on the screen: its board id and the trainer.
+    greeting_open: Option<(u64, u64)>,
     /// For a quest text's `$N`, `$C`, `$G`: the character's name, class and gender.
     name: String,
     gender: u8,
@@ -597,6 +600,7 @@ impl Game {
             last_tick: now,
             upgrades: upgrade::Upgrades::default(),
             open_panel: None,
+            greeting_open: None,
             name: c.name.clone(),
             gender: c.gender,
             chests: chest::chests(&data),
@@ -743,6 +747,7 @@ impl Game {
         }
         self.take_pick_choice();
         self.take_panel_answer();
+        self.take_greeting_answer();
         self.take_armory_action();
         self.take_spirit_action();
         self.take_queue_move();

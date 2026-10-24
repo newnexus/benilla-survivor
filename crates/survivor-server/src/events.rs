@@ -458,3 +458,21 @@ pub fn profession_icons(trainer: u32) -> &'static [&'static str] {
         _ => &[],
     }
 }
+
+/// What `trainer` says to the player walking up to them at home in Deathknell.
+pub fn greeting(trainer: u32) -> &'static str {
+    match trainer {
+        4598 => "Back from the mine with all your bones, $N? The forge is hot and the hammer's \
+            itching. Ore goes in, steel comes out. What'll it be?",
+        3523 => "Ah, $N! Mind the pins. Every coat in Deathknell came off this table, and there's \
+            always another seam to sew.",
+        5695 => "You again. Good. The dust remembers what things once were, $N. I can make it \
+            remember a little more.",
+        6289 => "Leg's holding up, thanks to you. Bring me hides, $N, and I'll make you something \
+            that turns a claw.",
+        4552 => "Sit, sit! There's always something in the pot, $N. Don't ask what. It's good for \
+            you.",
+        5759 => "Back in one piece? Mostly? Let me look at you, $N. Then tell me what you need.",
+        _ => "Yes, $N?",
+    }
+}
