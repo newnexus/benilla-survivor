@@ -321,6 +321,7 @@ fn session(
                 *playing.lock().expect("game") = None;
                 in_world = None;
                 crate::party::left();
+                crate::coords::set(None);
             }
             _ => {}
         }

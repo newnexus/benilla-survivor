@@ -282,6 +282,22 @@ pub mod loot_feed {
 }
 
 /// The player's purse, copper, for the screen's corner.
+/// Where the player stands, for the coordinates on screen while the game is being made.
+pub mod coords {
+    use std::sync::Mutex;
+
+    static HERE: Mutex<Option<([f32; 3], f32)>> = Mutex::new(None);
+
+    /// The player's position and facing, if in the world.
+    pub fn get() -> Option<([f32; 3], f32)> {
+        *HERE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn set(at: Option<([f32; 3], f32)>) {
+        *HERE.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = at;
+    }
+}
+
 pub mod purse {
     use std::sync::atomic::{AtomicU32, Ordering};
 

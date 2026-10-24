@@ -764,6 +764,7 @@ impl Game {
         self.take_shop_action();
         // The others keep moving while our world is paused.
         self.sync_party();
+        crate::coords::set(Some((self.player.pos, self.player.facing)));
         self.pause_for_menu();
         if self.paused() {
             return;
