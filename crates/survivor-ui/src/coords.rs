@@ -1,5 +1,6 @@
 //! While the game is being made: where the player stands, under their portrait, as the server
-//! has it (x, y, z and facing), for placing things in the world. `$SURVIVOR_COORDS=off` hides it.
+//! has it (x, y, z and facing), for placing things in the world, and under it how the party
+//! stands (hosting at which address, joined, who else is here). `$SURVIVOR_COORDS=off` hides it.
 
 use bevy::prelude::*;
 
@@ -35,7 +36,12 @@ fn show_coords(
         }
     }
     let Some(([x, y, z], facing)) = here else { return };
-    let line = format!("{x:.1}, {y:.1}, {z:.1}   facing {facing:.2}");
+    let mut line = format!("{x:.1}, {y:.1}, {z:.1}   facing {facing:.2}");
+    let party = survivor_server::party::status();
+    if !party.is_empty() {
+        line = format!("{line}
+{party}");
+    }
     if shown.is_none() {
         let Some(library) = &screen.library else { return };
         let font = library

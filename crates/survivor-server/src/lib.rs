@@ -352,7 +352,7 @@ pub mod town;
 pub mod waves;
 mod wire;
 mod world;
-mod party;
+pub mod party;
 
 use std::net::TcpListener;
 use std::sync::mpsc;

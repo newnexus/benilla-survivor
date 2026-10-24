@@ -6,7 +6,9 @@
 //! - Finding the host: a UDP shout on [`PORT`] to the network's broadcast address (and to this
 //!   PC, for two games on one machine). A host answers with its link's TCP port; with no answer
 //!   within [`LISTEN_FOR`] the game becomes the host and answers others from then on.
-//! - The link: TCP, messages framed as `u32 length, u8 kind, u32 sender, body`. The host passes
+//! - Joining by address instead: `$SURVIVOR_JOIN=<ip>`, or a `party.txt` beside the game holding
+//!   the host's IP address (the shout can be lost on a PC with a VPN or several networks).
+//! - The link: TCP on [`PORT`] (another if taken), messages framed as `u32 length, u8 kind, u32 sender, body`. The host passes
 //!   every message on to the other joiners, so all see all.
 //! - `$SURVIVOR_PARTY=off` plays alone.
 //!
@@ -14,12 +16,12 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
-/// The UDP port a host listens on for shouts.
+/// The UDP port a host listens on for shouts, and the TCP port of its link.
 const PORT: u16 = 47_123;
 const SHOUT: &[u8] = b"TIRISFALL?";
 const ANSWER: &str = "TIRISFALL!";
@@ -74,6 +76,27 @@ struct State {
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
+/// How the party stands, for the screen: hosting, joined, alone.
+static STATUS: Mutex<String> = Mutex::new(String::new());
+
+fn set_status(s: String) {
+    eprintln!("survivor-party: {s}");
+    *STATUS.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = s;
+}
+
+/// How the party stands, and who else is in the world: one line for the screen.
+pub fn status() -> String {
+    let base = STATUS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let names: Vec<String> = state()
+        .as_ref()
+        .map(|s| s.others.values().map(|h| h.name.clone()).collect())
+        .unwrap_or_default();
+    if names.is_empty() {
+        base
+    } else {
+        format!("{base}, with {}", names.join(", "))
+    }
+}
 static LINKS: Mutex<Links> = Mutex::new(Links(Vec::new()));
 
 fn state() -> std::sync::MutexGuard<'static, Option<State>> {
@@ -106,11 +129,57 @@ pub(crate) fn start() {
         events: Vec::new(),
     });
     let _ = thread::Builder::new().name("survivor-party".into()).spawn(move || {
-        match find_host() {
-            Some(host) => join(host, me),
+        // A host named by hand first (not this PC itself); not there, look for one as usual.
+        if let Some(ip) = join_address().filter(|ip| !local_ips().contains(ip)) {
+            set_status(format!("Party: joining {ip}"));
+            if let Some(stream) = connect(SocketAddr::new(ip.into(), PORT)) {
+                joined(stream, me);
+                return;
+            }
+        }
+        set_status("Party: looking for a host".into());
+        match find_host().and_then(connect) {
+            Some(stream) => joined(stream, me),
             None => host(me),
         }
     });
+}
+
+/// A host's address given by hand: `$SURVIVOR_JOIN`, else the first line of `party.txt` in the
+/// game's folder (or the folder it runs in).
+fn join_address() -> Option<Ipv4Addr> {
+    if let Ok(v) = std::env::var("SURVIVOR_JOIN") {
+        return v.trim().parse().ok();
+    }
+    let beside_exe = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("party.txt")));
+    for path in beside_exe.into_iter().chain([std::path::PathBuf::from("party.txt")]) {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Some(ip) = text.lines().map(str::trim).find(|l| !l.is_empty()) {
+                return ip.parse().ok();
+            }
+        }
+    }
+    None
+}
+
+/// This PC's own network addresses on home networks (no loopback, no link-local), from its
+/// name's lookup, which on Windows lists every adapter's.
+fn local_ips() -> Vec<Ipv4Addr> {
+    let name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".into());
+    let mut ips: Vec<Ipv4Addr> = (name.as_str(), 0)
+        .to_socket_addrs()
+        .map(|a| {
+            a.filter_map(|a| match a.ip() {
+                std::net::IpAddr::V4(v) => Some(v),
+                std::net::IpAddr::V6(_) => None,
+            })
+            .collect()
+        })
+        .unwrap_or_default();
+    ips.retain(|ip| ip.is_private() && !ip.is_link_local());
+    ips.sort();
+    ips.dedup();
+    ips
 }
 
 /// Shout for a host; its link's address if one answers.
@@ -121,28 +190,54 @@ fn find_host() -> Option<SocketAddr> {
     for to in ["255.255.255.255", "127.0.0.1"] {
         let _ = socket.send_to(SHOUT, (to, PORT));
     }
+    // Each network's own broadcast too (as a /24), from a socket on that network: the general
+    // one leaves by a single adapter, which on a PC with a VPN may not be the home network.
+    for ip in local_ips() {
+        let [a, b, c, _] = ip.octets();
+        if let Ok(s) = UdpSocket::bind((ip, 0)) {
+            let _ = s.set_broadcast(true);
+            let _ = s.send_to(SHOUT, (Ipv4Addr::new(a, b, c, 255), PORT));
+            // The answer comes back to that socket: listen on it from the main one's loop.
+            let _ = s.set_read_timeout(Some(LISTEN_FOR / 4));
+            let mut buf = [0u8; 64];
+            if let Ok((n, from)) = s.recv_from(&mut buf) {
+                if let Some(addr) = answer(&buf[..n], from) {
+                    return Some(addr);
+                }
+            }
+        }
+    }
     let mut buf = [0u8; 64];
     let (n, from) = socket.recv_from(&mut buf).ok()?;
-    let text = std::str::from_utf8(&buf[..n]).ok()?;
+    answer(&buf[..n], from)
+}
+
+/// A host's answer to a shout: its link's address.
+fn answer(msg: &[u8], from: SocketAddr) -> Option<SocketAddr> {
+    let text = std::str::from_utf8(msg).ok()?;
     let port: u16 = text.strip_prefix(ANSWER)?.trim().parse().ok()?;
-    eprintln!("survivor-party: a host at {}, joining", from.ip());
     Some(SocketAddr::new(from.ip(), port))
 }
 
 /// Be the host: answer shouts, take joiners, pass each one's messages on to the rest.
 fn host(me: u32) {
-    let Ok(listener) = TcpListener::bind("0.0.0.0:0") else { return };
+    let Ok(listener) = TcpListener::bind(("0.0.0.0", PORT)).or_else(|_| TcpListener::bind("0.0.0.0:0")) else {
+        set_status("Party: off (no port)".into());
+        return;
+    };
     let Ok(port) = listener.local_addr().map(|a| a.port()) else { return };
     let Ok(udp) = UdpSocket::bind(("0.0.0.0", PORT)) else {
         // Another game on this PC has the port and did not answer: play alone.
-        eprintln!("survivor-party: port {PORT} taken, playing alone");
+        set_status("Party: off (another game here hosts)".into());
         return;
     };
-    eprintln!("survivor-party: hosting (link port {port})");
+    let ips: Vec<String> = local_ips().iter().map(Ipv4Addr::to_string).collect();
+    set_status(format!("Party: hosting at {}", if ips.is_empty() { "this PC".to_owned() } else { ips.join(" / ") }));
     let _ = thread::Builder::new().name("survivor-party-shouts".into()).spawn(move || {
         let mut buf = [0u8; 64];
         while let Ok((n, from)) = udp.recv_from(&mut buf) {
             if &buf[..n] == SHOUT {
+                eprintln!("survivor-party: heard a shout from {}", from.ip());
                 let _ = udp.send_to(format!("{ANSWER}{port}").as_bytes(), from);
             }
         }
@@ -156,12 +251,21 @@ fn host(me: u32) {
     }
 }
 
-/// A joiner: link to the host and read it.
-fn join(host: SocketAddr, me: u32) {
-    let Ok(stream) = TcpStream::connect_timeout(&host, Duration::from_secs(3)) else {
-        eprintln!("survivor-party: the host did not take the link, playing alone");
-        return;
-    };
+/// Link to a host, if one takes it.
+fn connect(host: SocketAddr) -> Option<TcpStream> {
+    let stream = TcpStream::connect_timeout(&host, Duration::from_secs(3));
+    if stream.is_err() {
+        eprintln!("survivor-party: no host answered at {host}");
+    }
+    stream.ok()
+}
+
+/// Joined: read the host's link for as long as it lasts.
+fn joined(stream: TcpStream, me: u32) {
+    set_status(format!(
+        "Party: joined {}",
+        stream.peer_addr().map_or_else(|_| "the host".into(), |a| a.ip().to_string())
+    ));
     let _ = stream.set_nodelay(true);
     welcome(&stream, me);
     // Read on this thread: the link lives as long as the game.
@@ -231,7 +335,11 @@ fn read_link_blocking(mut stream: TcpStream, me: u32, host: bool) {
     for id in seen {
         take(KIND_BYE, id, &[]);
     }
-    eprintln!("survivor-party: a link closed");
+    if host {
+        eprintln!("survivor-party: a link closed");
+    } else {
+        set_status("Party: the host left, playing alone".into());
+    }
 }
 
 /// The host: a message from one joiner to every other.
