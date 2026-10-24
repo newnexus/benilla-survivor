@@ -26,7 +26,7 @@
 //! is worn or kept when the player walks back into town, alive, joins the collection; dying loses
 //! it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use benilla_protocol::messages::opcode;
@@ -399,15 +399,18 @@ fn wearable(class: u8, item_class: u32, subclass: u32, inventory_type: u32) -> b
 }
 
 impl Game {
-    /// Three items for every chest, for this run.
+    /// Three items for every chest, for this run, no item in two chests.
     pub(super) fn roll_chest_loot(&mut self) {
+        self.run_offered.clear();
         self.chest_loot = (0..self.chests.len()).map(|_| self.roll_gear_set()).collect();
         self.publish_chest_glow();
     }
 
-    /// Three items to choose from, as a chest holds: mostly the class's own armour kind.
+    /// Three items to choose from, as a chest holds: mostly the class's own armour kind, none
+    /// offered before this run (while there are enough left).
     fn roll_gear_set(&mut self) -> Vec<GearItem> {
         let class = self.player.class;
+        let offered: &HashSet<u32> = &self.run_offered;
         let gear = |own: bool| -> Vec<u32> {
             self.data
                 .gear
@@ -427,9 +430,17 @@ impl Game {
                 .map(|g| g.0)
                 .collect()
         };
-        let (pool, others) = (gear(true), gear(false));
+        // The items not offered yet; all of them again once too few are left.
+        let fresh = |all: Vec<u32>| -> Vec<u32> {
+            let left: Vec<u32> = all.iter().copied().filter(|e| !offered.contains(e)).collect();
+            if left.len() >= LOOT { left } else { all }
+        };
+        let (pool, others) = (fresh(gear(true)), fresh(gear(false)));
         let mut items: Vec<GearItem> = Vec::new();
-        while items.len() < LOOT && !pool.is_empty() {
+        // Tries are bounded: a pool of fewer than three distinct items gives what it has.
+        let mut tries = 0;
+        while items.len() < LOOT && !pool.is_empty() && tries < 200 {
+            tries += 1;
             let mut entry = pool[(self.rng.next() % pool.len() as u64) as usize];
             let armour = self.data.items.get(&entry).is_some_and(|t| t.class == 4);
             if armour && !others.is_empty() && self.rng.next() % 100 >= OWN_ARMOUR_PERCENT {
@@ -440,6 +451,7 @@ impl Game {
             }
             items.push(self.roll_item(entry));
         }
+        self.run_offered.extend(items.iter().map(|i| i.entry));
         items
     }
 

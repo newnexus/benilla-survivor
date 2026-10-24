@@ -385,6 +385,8 @@ pub(crate) struct Game {
     chest_price: u32,
     chest_asked: Option<usize>,
     chest_loot: Vec<Vec<gear::GearItem>>,
+    /// Every item put in a chest or a boss's spoils this run: none is offered twice.
+    run_offered: HashSet<u32>,
     /// Elites and bosses slain whose spoils are still to be offered, by name.
     elite_drops: Vec<String>,
     /// Quest reward items as their previews show them, by entry, until one is taken.
@@ -610,6 +612,7 @@ impl Game {
             chest_price: 0,
             chest_asked: None,
             chest_loot: Vec::new(),
+            run_offered: HashSet::new(),
             elite_drops: Vec::new(),
             reward_rolls: std::collections::HashMap::new(),
             run_gear: gear::RunGear::default(),
