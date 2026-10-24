@@ -13,6 +13,11 @@ const RESET: f32 = 7.0;
 /// The innkeepers: Deathknell's (Joshua Kien, the general supplier, out in front of his house)
 /// and Brill's.
 pub(crate) const KEEPERS: &[u32] = &[2115, 5688];
+/// Wares cost a third of their 1.12 price (at least 1), since kills drop a fifth of the gold; it
+/// stays above the 1.12 sell price, a quarter, so buying to sell gains nothing.
+fn buy_price(full: u32) -> u32 {
+    (full / 3).max(1)
+}
 
 impl Game {
     /// The keeper within `range`: their name and guid.
@@ -81,7 +86,7 @@ impl Game {
             .shop
             .iter()
             .filter_map(|&(entry, level)| {
-                let price = self.data.items.get(&entry)?.buy;
+                let price = buy_price(self.data.items.get(&entry)?.buy);
                 self.ware(entry, self.in_pack(entry), price, level)
             })
             .collect();
@@ -140,7 +145,7 @@ impl Game {
                 let Some(&(_, level)) = self.data.shop.iter().find(|s| s.0 == entry) else {
                     return;
                 };
-                let price = self.data.items.get(&entry).map_or(0, |t| t.buy);
+                let price = self.data.items.get(&entry).map_or(0, |t| buy_price(t.buy));
                 if level > self.meta.level || self.money < price {
                     return;
                 }

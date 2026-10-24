@@ -128,6 +128,9 @@ fn session(
         let (op, body) = link.recv()?;
         match op {
             opcode::CMSG_CHAR_ENUM => {
+                // The client takes the tutorial bank once per login and zeroes it at world
+                // entry, so a relog on the same link needs it again: ahead of every roster.
+                out.send(opcode::SMSG_TUTORIAL_FLAGS, &[0xFF; 32])?;
                 let body = roster.lock().expect("roster").enum_body();
                 out.send(opcode::SMSG_CHAR_ENUM, &body)?;
             }

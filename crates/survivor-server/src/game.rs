@@ -684,6 +684,9 @@ impl Game {
         game.reset_chests();
         if game.in_run() {
             game.waves = Some(game.new_waves(now));
+            // Out of town at login (`$SURVIVOR_START`): the loaded purse is the town's, kept for
+            // the return as a run started through the barrier keeps it.
+            game.town_money = std::mem::take(&mut game.money);
         }
         game.sort_start_bar(&buttons);
         game

@@ -13,8 +13,9 @@ use crate::packets::{self, f, Fields, Update};
 /// How close the player stands to open a chest, and how far to walk off before it asks again.
 const OPEN_RANGE: f32 = 3.5;
 const ASK_RESET: f32 = 7.0;
-/// The first chest of a run costs this much gold, each one after 75% more than the one before.
-const FIRST_PRICE: u32 = 50;
+/// The first chest of a run costs this much gold, each one after 75% more than the one before
+/// (16, was 50 before kills dropped a fifth of the gold).
+const FIRST_PRICE: u32 = 16;
 const PRICE_GROWTH: f32 = 1.75;
 /// Copper a kill drops, per level of the creature: between these (a fifth of the first rate,
 /// 3 to 8, which Donis found five times too much).

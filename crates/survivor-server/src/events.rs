@@ -386,7 +386,7 @@ pub const EVENTS: &[Event] = &[
         trainer: 5759, // Nurse Neela
         profession: "First Aid",
         spot: [1984.8, 1591.6, 82.4, 3.1],
-        home: [1840.0, 1615.0, 95.7, 6.0],
+        home: [1859.0, 1615.0, 95.7, 0.0],
         ambush: &[(RATTLECAGE_SKELETON, 5)],
         ambush_line: "Skeletons break through the boards!",
         defend_lines: &[
